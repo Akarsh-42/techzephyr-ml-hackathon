@@ -42,3 +42,10 @@
 - Time Taken / Latency: N/A (compatibility fix from dependency investigation)
 - Technical Explanation: Added an app-owned, version-guarded compatibility wrapper for Gradio 4.44.0 / gradio-client 1.3.0. It treats nested non-dict schemas as `Any` and skips boolean `additionalProperties` while the client builds descriptive API type hints, mirroring the defensive changes previously made directly in `.venv/Lib/site-packages/gradio_client/utils.py`. `app.py` imports the shim before constructing Blocks. The workaround is now version-controlled and will be present in Colab without editing installed library files. No dependency versions or `.venv` files were changed. The app was not launched after this edit.
 ---
+### [2026-10-31 21:11:26 IST] — Feature: Align TripoSR Loader and Mesh Extraction Calls
+- Role Owner: Role B (3D Lead)
+- Role Importance & Job: Enables Stage 4 to call the installed TripoSR API correctly, load the cached checkpoint, and place the model on the configured inference device.
+- Files Touched: src/image_to_3d.py, what_we_did.md, done_so_far.md
+- Time Taken / Latency: N/A (API integration correction)
+- Technical Explanation: Replaced the unsupported `device_name` keyword and invalid config/checkpoint positional arguments. The loader now finds a snapshot containing both `config.yaml` and `model.ckpt`, calls `TSR.from_pretrained(snapshot_dir, "config.yaml", "model.ckpt")`, then moves the model to `DEVICE_3D` and sets eval mode. Mesh extraction now passes the required `has_vertex_color=False` because vertex colors are sampled from the composited input afterward. A mocked contract smoke check and Python compile check passed; the actual TripoSR GPU inference was not run in this local CPU venv.
+---

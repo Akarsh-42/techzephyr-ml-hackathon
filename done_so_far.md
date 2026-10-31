@@ -154,3 +154,10 @@
 }
 - Notes: None
 ---
+### [2026-10-31 21:11:26 IST] — Feature: Align TripoSR Loader and Mesh Extraction Calls
+- Role Owner: Role B (3D Lead)
+- Role Importance & Job: Fixes the live Stage 4 `unexpected keyword argument 'device_name'` failure and addresses the required TripoSR loader and mesh-extraction parameters.
+- Files Touched: src/image_to_3d.py, what_we_did.md, done_so_far.md
+- Time Taken / Latency: N/A (API integration correction)
+- Technical Explanation: Selects a cached TripoSR snapshot only when config and checkpoint files coexist; passes the snapshot directory and their names to `TSR.from_pretrained`; moves the returned module to `DEVICE_3D` and calls `.eval()`. Passes `has_vertex_color=False` to `extract_mesh`, preserving the existing later step that samples vertex colors from the source image. Mocked call-contract smoke check passed for snapshot selection, model device placement, and extraction arguments; Python compilation and `git diff --check` passed. No real GPU inference performed.
+---

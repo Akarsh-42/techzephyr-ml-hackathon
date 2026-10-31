@@ -33,11 +33,27 @@ def _load_triposr():
         from tsr.system import TSR
 
         cache = Path(config.WEIGHTS_CACHE_DIR)
-        ckpt = next(p for p in cache.rglob("model.ckpt") if "TripoSR" in str(p))
-        cfg = next(p for p in cache.rglob("config.yaml") if "TripoSR" in str(p))
-        _triposr_model = TSR.from_pretrained(
-            cfg, ckpt, device_name=config.DEVICE_3D
+        snapshots = sorted(
+            (
+                checkpoint.parent
+                for checkpoint in cache.rglob("model.ckpt")
+                if "triposr" in str(checkpoint).lower()
+                and (checkpoint.parent / "config.yaml").is_file()
+            ),
+            key=str,
         )
+        if not snapshots:
+            raise FileNotFoundError(
+                "TripoSR config.yaml and model.ckpt were not found together under "
+                f"WEIGHTS_CACHE_DIR={cache}. Run download_weights.py first."
+            )
+
+        snapshot_dir = snapshots[0]
+        _triposr_model = TSR.from_pretrained(
+            str(snapshot_dir), "config.yaml", "model.ckpt"
+        )
+        _triposr_model.to(config.DEVICE_3D)
+        _triposr_model.eval()
         _triposr_model.renderer.set_chunk_size(8192)
     return _triposr_model
 
@@ -76,7 +92,11 @@ def reconstruct_3d_mesh(
     device = torch.device(config.DEVICE_3D)
     with torch.no_grad():
         scene_codes = model([composite], device)
-        mesh = model.extract_mesh(scene_codes, resolution=mc_resolution)[0]
+        # Vertex colors are sampled from the composited input below, so skip
+        # TripoSR's optional per-vertex color query during mesh extraction.
+        mesh = model.extract_mesh(
+            scene_codes, has_vertex_color=False, resolution=mc_resolution
+        )[0]
 
     mesh.visual.vertex_colors = _sample_vertex_colors(mesh, composite)
     return mesh
