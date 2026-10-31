@@ -102,6 +102,7 @@ def _load_diffusion_pipeline():
         "sudo-ai/zero123plus-v1.2",
         custom_pipeline="sudo-ai/zero123plus-pipeline",
         torch_dtype=torch.float16,
+        trust_remote_code=True,
     )
     pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(
         pipeline.scheduler.config, timestep_spacing="trailing"
@@ -201,13 +202,14 @@ def _mock_mesh() -> trimesh.Trimesh:
     return mesh
 
 
-def _generate_multiview(rgba_img: Image.Image, seed: int = 42, diffusion_steps: int = 75):
+def _generate_multiview(rgba_img: Image.Image, seed: int = 42, diffusion_steps: int = 28):
     """Run Zero123++ to generate 6 multi-view images from a single RGBA input.
 
     Returns a tensor of shape (6, 3, 320, 320) with pixel values in [0, 1].
     """
     from einops import rearrange
 
+    print(f"Running Zero123++ multi-view diffusion ({diffusion_steps} steps) ...")
     pipeline = _load_diffusion_pipeline()
 
     # CRITICAL: Composite RGBA onto WHITE before passing to Zero123++.
@@ -227,6 +229,7 @@ def _generate_multiview(rgba_img: Image.Image, seed: int = 42, diffusion_steps: 
         generator=generator,
     ).images[0]
 
+    print("Multi-view generation done. Splitting grid into 6 views ...")
     # Split the 960x640 grid into 6 individual 320x320 views (3 rows x 2 cols)
     images = np.asarray(output_image, dtype=np.float32) / 255.0
     images = torch.from_numpy(images).permute(2, 0, 1).contiguous().float()  # (3, 960, 640)
@@ -246,6 +249,7 @@ def _reconstruct_from_multiview(multiview_images: torch.Tensor) -> trimesh.Trime
     """
     from torchvision.transforms import v2
 
+    print("Running LRM mesh reconstruction ...")
     model = _load_recon_model()
     device = torch.device(config.DEVICE_3D)
 
@@ -299,12 +303,14 @@ def reconstruct_3d_mesh(
         return _mock_mesh()
 
     # Step 1: Generate 6 multi-view images via Zero123++
+    print("=== Stage 4: InstantMesh 3D Reconstruction ===")
     multiview_images, _grid_img = _generate_multiview(rgba_img, seed=seed)
 
     # Step 2: Free the diffusion pipeline to make room for the reconstruction model
     _unload_diffusion_pipeline()
 
     # Step 3: Reconstruct mesh from multi-view images via LRM + FlexiCubes
+    print("Diffusion pipeline freed. Starting mesh reconstruction ...")
     mesh = _reconstruct_from_multiview(multiview_images)
 
     return mesh
