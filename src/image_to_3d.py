@@ -210,9 +210,19 @@ def _generate_multiview(rgba_img: Image.Image, seed: int = 42, diffusion_steps: 
 
     pipeline = _load_diffusion_pipeline()
 
+    # CRITICAL: Composite RGBA onto WHITE before passing to Zero123++.
+    # InstantMesh's custom UNet was trained on white backgrounds. Newer
+    # diffusers may drop the alpha channel (transparent → black) instead
+    # of compositing onto white, causing the model to reconstruct the
+    # black background as geometry (the "crumpled paper" artifact).
+    input_rgb = Image.alpha_composite(
+        Image.new("RGBA", rgba_img.size, (255, 255, 255, 255)),
+        rgba_img.convert("RGBA"),
+    ).convert("RGB")
+
     generator = torch.Generator(device=config.DEVICE_3D).manual_seed(seed)
     output_image = pipeline(
-        rgba_img,
+        input_rgb,
         num_inference_steps=diffusion_steps,
         generator=generator,
     ).images[0]
