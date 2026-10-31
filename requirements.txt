@@ -10,8 +10,10 @@ numpy<2.0
 opencv-python-headless>=4.8.0
 Pillow>=10.0.0
 trimesh>=4.0.0
-# --- TripoSR runtime deps (the repo itself is NOT pip-installable; source is cloned by download_weights.py) ---
+# --- TripoSR runtime deps (tsr source is cloned by download_weights.py) ---
 omegaconf>=2.3.0
 einops>=0.7.0
 imageio>=2.31.0
-git+https://github.com/tatsy/torchmcubes.git
+# NOTE: torchmcubes is intentionally NOT listed here. It must build against an
+# already-installed torch, so it is installed by download_weights.py via:
+#   pip install --no-build-isolation git+https://github.com/tatsy/torchmcubes.git
