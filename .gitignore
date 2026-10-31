@@ -1,0 +1,21 @@
+# --- SKETCH2SHAPE AI .gitignore ---
+venv/
+__pycache__/
+*.pyc
+.env
+
+# model weights & caches (never commit)
+*.safetensors
+*.ckpt
+*.pth
+*.onnx
+*.bin
+weights_cache/
+.cache/
+
+# runtime outputs (commit only curated samples under examples/ manually)
+outputs/
+done_so_far.md
+
+# notebooks
+.ipynb_checkpoints/
