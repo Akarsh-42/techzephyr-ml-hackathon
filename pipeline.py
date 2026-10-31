@@ -20,6 +20,7 @@ def run_pipeline(
     upload_input,
     user_prompt: str = "",
     seed: int = 42,
+    mc_resolution: int = 256,
 ) -> dict:
     run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     timings: dict = {}
@@ -40,7 +41,12 @@ def run_pipeline(
             timings["stage3_rembg_s"] = round(sketch_to_2d.LAST_TIMINGS["rembg_s"], 2)
 
             t = time.perf_counter()
-            mesh = reconstruct_3d_mesh(isolated, backend=config.PRIMARY_3D_BACKEND, seed=run_seed)
+            mesh = reconstruct_3d_mesh(
+                isolated,
+                backend=config.PRIMARY_3D_BACKEND,
+                seed=run_seed,
+                mc_resolution=int(mc_resolution),
+            )
             timings["stage4_3d_recon_s"] = round(time.perf_counter() - t, 2)
 
             t = time.perf_counter()
@@ -96,7 +102,9 @@ if __name__ == "__main__":
             "attempt 2 silently re-runs with seed+1 on any Stage 2-5 exception (Rule 4) before "
             "the error ever reaches the UI. Stage 2/3 split timings come from "
             "sketch_to_2d.LAST_TIMINGS; stages 4-5 use time.perf_counter(). Every run calls "
-            "log_pipeline_run with status SUCCESS/RETRY_SUCCESS/FAILURE."
+            "log_pipeline_run with status SUCCESS/RETRY_SUCCESS/FAILURE. mc_resolution (UI "
+            "slider, 128-512) is passed through to reconstruct_3d_mesh so judges can trade "
+            "mesh detail against latency live."
         ),
         duration_or_latency=result["report"]["timings"]["total_runtime_s"],
     )
