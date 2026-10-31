@@ -3,7 +3,29 @@ from __future__ import annotations
 
 import gradio as gr
 
-from pipeline import run_pipeline
+# ---------------------------------------------------------------------------
+# Compatibility patch: gradio_client 1.3.0 (pinned by gradio 4.44.0) crashes
+# with "TypeError: argument of type 'bool' is not iterable" while building API
+# info, because Sketchpad/Gallery components emit boolean `additionalProperties`
+# flags in their JSON schemas and get_type() assumes every schema is a dict
+# (github.com/gradio-app/gradio/issues/11084). Fixed upstream only in gradio 5.x;
+# the blueprint pins gradio 4.44.0, so we harden the parser here instead.
+# Must run BEFORE any gradio component is instantiated.
+# ---------------------------------------------------------------------------
+import gradio_client.utils as _gcu
+
+_orig_get_type = _gcu.get_type
+
+
+def _safe_get_type(schema):
+    if not isinstance(schema, dict):
+        return "Any"
+    return _orig_get_type(schema)
+
+
+_gcu.get_type = _safe_get_type
+
+from pipeline import run_pipeline  # noqa: E402  (import after patch, on purpose)
 
 
 def generate(sketch, upload, prompt, seed, mc_resolution):
@@ -37,10 +59,6 @@ with gr.Blocks(title="Sketch2Shape AI", theme=gr.themes.Soft()) as demo:
         with gr.Column():
             with gr.Tabs():
                 with gr.Tab("Draw"):
-                    # Plain constructor on purpose: Sketchpad(layers=False, brush=...) emits
-                    # a boolean `additionalProperties` JSON-schema flag that crashes
-                    # gradio_client 1.3.0's get_api_info (gradio#11084). Do not add
-                    # layers/brush args back without upgrading gradio_client first.
                     sketchpad = gr.Sketchpad(label="Sketch here")
                 with gr.Tab("Upload"):
                     upload = gr.Image(type="pil", label="Upload a sketch image")
