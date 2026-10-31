@@ -259,6 +259,18 @@ def _mock_mesh() -> trimesh.Trimesh:
     return mesh
 
 
+def _to_numpy(value) -> np.ndarray:
+    """Convert either an upstream Torch tensor or NumPy output to an ndarray.
+
+    InstantMesh's FlexiCubes ``extract_mesh`` returns NumPy arrays, whereas
+    some older/model-variant implementations return CUDA tensors.  Supporting
+    both forms prevents the export wrapper from depending on that detail.
+    """
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
 def _generate_multiview(rgba_img: Image.Image, seed: int = 42, diffusion_steps: int = 28):
     """Run Zero123++ to generate 6 multi-view images from a single RGBA input.
 
@@ -325,8 +337,9 @@ def _reconstruct_from_multiview(multiview_images: torch.Tensor) -> trimesh.Trime
             render_resolution=512,
         )
 
-    vertices_np = vertices.cpu().numpy()
-    faces_np = faces.cpu().numpy()
+    vertices_np = _to_numpy(vertices).astype(np.float32, copy=False)
+    faces_np = _to_numpy(faces).astype(np.int64, copy=False)
+    vertex_colors_np = _to_numpy(vertex_colors)
 
     # Coordinate flip for GLB compatibility (InstantMesh convention → standard)
     vertices_np = vertices_np @ np.array([[-1, 0, 0], [0, 1, 0], [0, 0, -1]], dtype=np.float32)
@@ -334,7 +347,7 @@ def _reconstruct_from_multiview(multiview_images: torch.Tensor) -> trimesh.Trime
     mesh = trimesh.Trimesh(
         vertices=vertices_np,
         faces=faces_np,
-        vertex_colors=vertex_colors,
+        vertex_colors=vertex_colors_np,
     )
     return mesh
 
