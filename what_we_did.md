@@ -35,3 +35,10 @@
 - Time Taken / Latency: N/A (follow-up diagnosis from UI screenshot)
 - Technical Explanation: The UI showed `Sketch canvas is completely blank` despite visible strokes. Gradio 4.44.0's Sketchpad payload can carry background, layer images, and an optional composite. The old normalizer ignored `layers` and could select an empty background if the composite was missing or blank. NumPy RGBA inputs were also being truncated to RGB, losing alpha. Updated `_to_pil` to preserve RGBA, added alpha-aware layer compositing over a white canvas, and fall back to that reconstructed image when the composite is missing or visually blank. No Gradio library files were changed. App rerun was not performed.
 ---
+### [2026-10-31 20:48:06 IST] — Feature: Project-Owned Gradio JSON Schema Compatibility
+- Role Owner: Role C (UI & Integration)
+- Role Importance & Job: Keeps the pinned Gradio UI launchable in Colab and local venvs when Pydantic emits valid boolean JSON Schema values that gradio-client 1.3 cannot parse.
+- Files Touched: gradio_compat.py, app.py, what_we_did.md, done_so_far.md
+- Time Taken / Latency: N/A (compatibility fix from dependency investigation)
+- Technical Explanation: Added an app-owned, version-guarded compatibility wrapper for Gradio 4.44.0 / gradio-client 1.3.0. It treats nested non-dict schemas as `Any` and skips boolean `additionalProperties` while the client builds descriptive API type hints, mirroring the defensive changes previously made directly in `.venv/Lib/site-packages/gradio_client/utils.py`. `app.py` imports the shim before constructing Blocks. The workaround is now version-controlled and will be present in Colab without editing installed library files. No dependency versions or `.venv` files were changed. The app was not launched after this edit.
+---

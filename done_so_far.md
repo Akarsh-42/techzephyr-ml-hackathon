@@ -63,6 +63,13 @@
 - Time Taken / Latency: N/A (follow-up diagnosis from UI screenshot)
 - Technical Explanation: Gradio 4.44.0 Sketchpad uses an ImageEditor payload with optional `composite` plus `background` and `layers`. Updated normalization to preserve four-channel NumPy RGBA data and to alpha-composite available layers over white when the supplied composite is missing or blank. This addresses the screenshot's blank-canvas rejection while retaining blank-input detection when no visible strokes exist. No Gradio package files were changed. App rerun was not performed.
 ---
+### [2026-10-31 20:48:06 IST] — Feature: Project-Owned Gradio JSON Schema Compatibility
+- Role Owner: Role C (UI & Integration)
+- Role Importance & Job: Prevents Gradio API metadata generation from crashing on valid boolean JSON Schema and makes the fix reproducible from the repository in Colab.
+- Files Touched: gradio_compat.py, app.py, what_we_did.md, done_so_far.md
+- Time Taken / Latency: N/A (compatibility fix from dependency investigation)
+- Technical Explanation: Added `gradio_compat.py`, guarded to Gradio 4.44.0 with gradio-client 1.3.0. Its app-level wrapper returns `Any` for non-dictionary nested schemas and ignores boolean `additionalProperties` when generating human-readable API type hints, matching the intent of the accepted local library diff. `app.py` imports this module before Blocks setup. This does not edit `.venv` or `site-packages`; the source workaround travels with the project. No app launch verification performed.
+---
 ### [2026-10-31 19:48:01 IST] — Pipeline Run: run_20261031_194755
 - Status: SUCCESS
 - Stage Timings (s): {
@@ -113,6 +120,34 @@
   "is_watertight": true,
   "min_axis_depth": 1.0,
   "obj_path": "C:\\iit_techzyphr\\techzephyr-ml-hackathon\\outputs\\run_20261031_194912.obj",
+  "obj_size_kb": 60.5,
+  "reload_verified": true,
+  "vertex_count": 642
+}
+- Notes: None
+---
+### [2026-10-31 20:52:31 IST] — Pipeline Run: run_20261031_205226
+- Status: SUCCESS
+- Stage Timings (s): {
+  "stage1_preprocess_s": 0.2,
+  "stage2_controlnet_s": 0.01,
+  "stage3_rembg_s": 4.95,
+  "stage4_3d_recon_s": 0.02,
+  "stage5_validate_export_s": 0.09,
+  "total_runtime_s": 5.27
+}
+- Mesh Report: {
+  "bbox_extents": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "face_count": 1280,
+  "glb_path": "C:\\iit_techzyphr\\techzephyr-ml-hackathon\\outputs\\run_20261031_205226.glb",
+  "glb_size_kb": 26.0,
+  "is_watertight": true,
+  "min_axis_depth": 1.0,
+  "obj_path": "C:\\iit_techzyphr\\techzephyr-ml-hackathon\\outputs\\run_20261031_205226.obj",
   "obj_size_kb": 60.5,
   "reload_verified": true,
   "vertex_count": 642

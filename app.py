@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import gradio as gr
 
+# Install the pinned Gradio/gradio-client schema compatibility guard before
+# Blocks builds API metadata during launch. This is project code, not a venv edit.
+import gradio_compat  # noqa: F401
+
 from pipeline import run_pipeline
 
 
