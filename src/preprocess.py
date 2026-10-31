@@ -24,7 +24,9 @@ def normalize_sketch_input(
 ) -> Image.Image:
     img = _to_pil(upload_input) if upload_input is not None else None
     if img is None and isinstance(sketch_input, dict):
-        composite = sketch_input.get("composite") or sketch_input.get("background")
+        composite = sketch_input.get("composite")
+        if composite is None:
+            composite = sketch_input.get("background")
         if composite is not None:
             img = _to_pil(composite)
     elif img is None and sketch_input is not None:
@@ -85,7 +87,8 @@ if __name__ == "__main__":
         files_modified=["src/preprocess.py"],
         technical_explanation=(
             "normalize_sketch_input prefers the upload tab, falls back through Sketchpad dict "
-            "keys (composite/background), alpha-composites RGBA onto white, rejects blank "
+            "keys (composite/background, selected via an explicit None check so NumPy arrays "
+            "are never truth-tested), alpha-composites RGBA onto white, rejects blank "
             "canvases (pixel std < 3). preprocess_sketch: bilateralFilter(9,75,75), Otsu with "
             "auto-inversion to white strokes on black, fallback when fg ratio < 0.5%, "
             "aspect-safe square padding to 512x512 RGB."
