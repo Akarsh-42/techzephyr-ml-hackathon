@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gc
+import time
 
 import cv2
 import numpy as np
@@ -15,6 +16,8 @@ DEFAULT_PROMPT = (
     "high quality, detailed, professional 3D render, studio lighting, "
     "clean solid background, centered object"
 )
+
+LAST_TIMINGS = {"controlnet_s": 0.0, "rembg_s": 0.0}
 
 _pipe = None
 
@@ -86,6 +89,7 @@ def generate_2d_and_isolate_foreground(
     user_prompt = (user_prompt or "").strip()
     prompt = f"{user_prompt}, {DEFAULT_PROMPT}" if user_prompt else DEFAULT_PROMPT
 
+    t = time.perf_counter()
     if config.MOCK_GPU:
         shaded_2d = _mock_shaded_render(scribble_img)
     else:
@@ -100,8 +104,11 @@ def generate_2d_and_isolate_foreground(
         ).images[0]
         if config.DEVICE_2D == config.DEVICE_3D:
             unload_2d_pipeline()
+    LAST_TIMINGS["controlnet_s"] = time.perf_counter() - t
 
+    t = time.perf_counter()
     recentered_rgba = recenter_foreground(remove(shaded_2d))
+    LAST_TIMINGS["rembg_s"] = time.perf_counter() - t
     return shaded_2d, recentered_rgba
 
 
@@ -114,6 +121,7 @@ if __name__ == "__main__":
     ImageDraw.Draw(scribble).ellipse([100, 100, 412, 412], outline=(255, 255, 255), width=6)
     shaded, isolated = generate_2d_and_isolate_foreground(scribble, seed=42)
     assert isolated.size == (512, 512) and isolated.mode == "RGBA"
+    assert LAST_TIMINGS["controlnet_s"] >= 0.0 and LAST_TIMINGS["rembg_s"] >= 0.0
 
     log_feature_progress(
         feature_name="Step 3 — ControlNet 2D Synthesis & 85% Foreground Isolation",
@@ -130,7 +138,8 @@ if __name__ == "__main__":
             "pipeline is unloaded with gc.collect() + torch.cuda.empty_cache() before Stage 4. "
             "rembg.remove yields RGBA, tight alpha>10 bbox crop, LANCZOS rescale to 85% frame "
             "occupancy on a transparent 512x512 canvas. MOCK_GPU renders a distance-transform "
-            "shading so CPU-first UI development runs end-to-end."
+            "shading so CPU-first UI development runs end-to-end. Stage 2/3 latencies recorded "
+            "in LAST_TIMINGS for pipeline.py per-stage reporting."
         ),
         duration_or_latency="MOCK (CPU) verified; GPU ~4-6s ControlNet + ~1.0s rembg on T4",
     )
