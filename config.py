@@ -50,4 +50,8 @@ FRAME_OCCUPANCY_RATIO = 0.85  # foreground fills 85% of the recentered RGBA fram
 MIN_VERTICES = 100            # strict floor; never >= 4
 MIN_FACES = 100               # strict floor; never >= 4
 MIN_AXIS_DEPTH = 0.05         # anti-plane check; never 1e-4
-LAPLACIAN_ITERATIONS = 1      # controlled smoothing, default 1 iteration
+# Shrink-free Taubin smoothing passes. Each pass = 2 filter sweeps (lambda +
+# mu), so 3 passes = 30 total sweeps in mesh_validator.filter_taubin. Plain
+# Laplacian shrank meshes into "mushy pillows"; Taubin removes high-frequency
+# noise without volume loss, and 3 passes visibly smooths lumpy sketch meshes.
+LAPLACIAN_ITERATIONS = 3      # shrink-free smoothing passes (was 1)
