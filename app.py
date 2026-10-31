@@ -37,11 +37,11 @@ with gr.Blocks(title="Sketch2Shape AI", theme=gr.themes.Soft()) as demo:
         with gr.Column():
             with gr.Tabs():
                 with gr.Tab("Draw"):
-                    sketchpad = gr.Sketchpad(
-                        label="Sketch here",
-                        layers=False,
-                        brush=gr.Brush(colors=["#101010"], color_mode="fixed"),
-                    )
+                    # Plain constructor on purpose: Sketchpad(layers=False, brush=...) emits
+                    # a boolean `additionalProperties` JSON-schema flag that crashes
+                    # gradio_client 1.3.0's get_api_info (gradio#11084). Do not add
+                    # layers/brush args back without upgrading gradio_client first.
+                    sketchpad = gr.Sketchpad(label="Sketch here")
                 with gr.Tab("Upload"):
                     upload = gr.Image(type="pil", label="Upload a sketch image")
             prompt = gr.Textbox(
@@ -78,4 +78,10 @@ with gr.Blocks(title="Sketch2Shape AI", theme=gr.themes.Soft()) as demo:
     )
 
 if __name__ == "__main__":
-    demo.queue().launch(server_name="0.0.0.0", server_port=7860)
+    demo.queue()
+    try:
+        demo.launch(server_name="127.0.0.1", server_port=7860)
+    except ValueError:
+        # Proxy/firewall blocks the localhost self-check (common on managed
+        # networks / OneDrive-synced machines) — fall back to a share link.
+        demo.launch(server_name="127.0.0.1", server_port=7860, share=True)
