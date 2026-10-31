@@ -69,16 +69,9 @@ def reconstruct_3d_mesh(
     device = torch.device(config.DEVICE_3D)
     with torch.no_grad():
         scene_codes = model([composite], device)
-        vertices, faces = model.extract_mesh(scene_codes, resolution=mc_resolution)
+        mesh = model.extract_mesh(scene_codes, resolution=mc_resolution)[0]
 
-    mesh = trimesh.Trimesh(
-        vertices=vertices,
-        faces=faces,
-        vertex_colors=_sample_vertex_colors(
-            trimesh.Trimesh(vertices=vertices, faces=faces, process=False), composite
-        ),
-        process=False,
-    )
+    mesh.visual.vertex_colors = _sample_vertex_colors(mesh, composite)
     return mesh
 
 
@@ -113,12 +106,13 @@ if __name__ == "__main__":
             "composite_for_backend reads BG colors exclusively from config (Rule 2, never "
             "hardcoded per call). TripoSR path: tsr.system.TSR loaded once as a lazy singleton "
             "from the snapshot_download cache (config.yaml + model.ckpt), chunked rendering "
-            "(8192) to bound VRAM, Marching Cubes at mc_resolution=256, vertex colors sampled "
-            "from the composited image by normalized bbox projection. seed is accepted for the "
-            "pipeline retry-once contract; TSR inference itself is deterministic. MOCK_GPU "
-            "returns a vertex-colored icosphere(subdivisions=3, radius=0.8) for CPU-first UI "
-            "development. InstantMesh raises a clear ValueError until the benchmark gate picks "
-            "the primary backend."
+            "(8192) to bound VRAM, Marching Cubes at mc_resolution=256. TSR.extract_mesh "
+            "returns a list of trimesh.Trimesh; we take the first mesh, then bake vertex "
+            "colors by sampling the composited image via normalized bbox projection. seed is "
+            "accepted for the pipeline retry-once contract; TSR inference itself is "
+            "deterministic. MOCK_GPU returns a vertex-colored icosphere(subdivisions=3, "
+            "radius=0.8) for CPU-first UI development. InstantMesh raises a clear ValueError "
+            "until the benchmark gate picks the primary backend."
         ),
         duration_or_latency="MOCK (CPU) verified; TripoSR ~5-15s on T4",
     )
