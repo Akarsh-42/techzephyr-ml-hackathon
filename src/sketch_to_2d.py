@@ -1,4 +1,4 @@
-"""Stages 2 & 3 — ControlNet-Scribble 2D synthesis (cuda:0) + rembg 85% foreground isolation."""
+"""Stages 2 & 3 â€” ControlNet-Scribble 2D synthesis (cuda:0) + rembg 85% foreground isolation."""
 from __future__ import annotations
 
 import gc
@@ -37,7 +37,11 @@ def _load_pipeline():
 
         controlnet = ControlNetModel.from_pretrained(config.CONTROLNET_MODEL_ID, torch_dtype=_dtype())
         pipe = StableDiffusionControlNetPipeline.from_pretrained(
-            config.SD_MODEL_ID, controlnet=controlnet, torch_dtype=_dtype()
+            config.SD_MODEL_ID,
+            controlnet=controlnet,
+            torch_dtype=_dtype(),
+            safety_checker=None,
+            requires_safety_checker=False,
         )
         pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
         pipe.set_progress_bar_config(disable=True)
@@ -124,7 +128,7 @@ if __name__ == "__main__":
     assert LAST_TIMINGS["controlnet_s"] >= 0.0 and LAST_TIMINGS["rembg_s"] >= 0.0
 
     log_feature_progress(
-        feature_name="Step 3 — ControlNet 2D Synthesis & 85% Foreground Isolation",
+        feature_name="Step 3 â€” ControlNet 2D Synthesis & 85% Foreground Isolation",
         role_owner="Role A (2D Vision Lead)",
         role_importance_and_job=(
             "Drives 3D Output Quality (25 pts) via shaded depth cues: converts flat strokes "
@@ -134,12 +138,15 @@ if __name__ == "__main__":
         files_modified=["src/sketch_to_2d.py"],
         technical_explanation=(
             "SD1.5 + sd-controlnet-scribble in float16, 20 steps, UniPCMultistepScheduler, "
-            "torch.Generator seed control; on single-GPU (DEVICE_2D == DEVICE_3D) the 2D "
-            "pipeline is unloaded with gc.collect() + torch.cuda.empty_cache() before Stage 4. "
-            "rembg.remove yields RGBA, tight alpha>10 bbox crop, LANCZOS rescale to 85% frame "
-            "occupancy on a transparent 512x512 canvas. MOCK_GPU renders a distance-transform "
-            "shading so CPU-first UI development runs end-to-end. Stage 2/3 latencies recorded "
-            "in LAST_TIMINGS for pipeline.py per-stage reporting."
+            "torch.Generator seed control; pipeline loaded with safety_checker=None and "
+            "requires_safety_checker=False (matching download_weights.py's "
+            "ignore_patterns=['safety_checker/*'] prefetch skip, saving ~3.6 GB); on "
+            "single-GPU (DEVICE_2D == DEVICE_3D) the 2D pipeline is unloaded with gc.collect() "
+            "+ torch.cuda.empty_cache() before Stage 4. rembg.remove yields RGBA, tight "
+            "alpha>10 bbox crop, LANCZOS rescale to 85% frame occupancy on a transparent "
+            "512x512 canvas. MOCK_GPU renders a distance-transform shading so CPU-first UI "
+            "development runs end-to-end. Stage 2/3 latencies recorded in LAST_TIMINGS for "
+            "pipeline.py per-stage reporting."
         ),
         duration_or_latency="MOCK (CPU) verified; GPU ~4-6s ControlNet + ~1.0s rembg on T4",
     )

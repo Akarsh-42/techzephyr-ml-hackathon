@@ -1,4 +1,4 @@
-"""Stage 4 — Per-backend BG compositing + TripoSR 3D reconstruction (cuda:1 / cuda:0)."""
+"""Stage 4 â€” Per-backend BG compositing + TripoSR 3D reconstruction (cuda:1 / cuda:0)."""
 from __future__ import annotations
 
 import sys
@@ -32,13 +32,17 @@ def _load_triposr():
     if _triposr_model is None:
         from tsr.system import TSR
 
+        # Locate the snapshot dir (contains both config.yaml and model.ckpt)
+        # and use the current TSR API: from_pretrained(dir, config_name=..., weight_name=...)
+        # followed by an explicit .to(device). The old (cfg_path, ckpt_path, device_name=...)
+        # signature no longer exists upstream.
         cache = Path(config.WEIGHTS_CACHE_DIR)
-        ckpt = next(p for p in cache.rglob("model.ckpt") if "TripoSR" in str(p))
-        cfg = next(p for p in cache.rglob("config.yaml") if "TripoSR" in str(p))
-        _triposr_model = TSR.from_pretrained(
-            cfg, ckpt, device_name=config.DEVICE_3D
+        snapshot = next(p for p in cache.rglob("config.yaml") if "TripoSR" in str(p)).parent
+        model = TSR.from_pretrained(
+            snapshot, config_name="config.yaml", weight_name="model.ckpt"
         )
-        _triposr_model.renderer.set_chunk_size(8192)
+        model.renderer.set_chunk_size(8192)
+        _triposr_model = model.to(config.DEVICE_3D)
     return _triposr_model
 
 
@@ -76,7 +80,12 @@ def reconstruct_3d_mesh(
     device = torch.device(config.DEVICE_3D)
     with torch.no_grad():
         scene_codes = model([composite], device)
-        mesh = model.extract_mesh(scene_codes, resolution=mc_resolution)[0]
+        # Upstream signature: extract_mesh(scene_codes, has_vertex_color, resolution, threshold).
+        # has_vertex_color is a required positional arg; we bake vertex colors ourselves
+        # from the composited image, so pass False here.
+        mesh = model.extract_mesh(
+            scene_codes, has_vertex_color=False, resolution=mc_resolution
+        )[0]
 
     mesh.visual.vertex_colors = _sample_vertex_colors(mesh, composite)
     return mesh
@@ -101,7 +110,7 @@ if __name__ == "__main__":
     assert mesh.visual.vertex_colors is not None
 
     log_feature_progress(
-        feature_name="Step 4 — 3D Reconstruction & Per-Backend Compositing",
+        feature_name="Step 4 â€” 3D Reconstruction & Per-Backend Compositing",
         role_owner="Role B (3D Lead)",
         role_importance_and_job=(
             "Core engine for 3D Output Quality (25 pts) & Efficiency (20 pts): routes "
@@ -112,16 +121,19 @@ if __name__ == "__main__":
         technical_explanation=(
             "composite_for_backend reads BG colors exclusively from config (Rule 2, never "
             "hardcoded per call). TripoSR path: tsr.system.TSR loaded once as a lazy singleton "
-            "from the snapshot_download cache (config.yaml + model.ckpt), chunked rendering "
-            "(8192) to bound VRAM, Marching Cubes at mc_resolution=256. TSR.extract_mesh "
-            "returns a list of trimesh.Trimesh; we take the first mesh, then bake vertex "
-            "colors by sampling the composited image via normalized bbox projection. seed is "
-            "accepted for the pipeline retry-once contract; TSR inference itself is "
-            "deterministic. MOCK_GPU returns a vertex-colored icosphere(subdivisions=3, "
-            "radius=0.8) for CPU-first UI development. InstantMesh raises a clear ValueError "
-            "until the benchmark gate picks the primary backend. TripoSR's GitHub repo is NOT "
-            "pip-installable (no setup.py), so third_party/TripoSR (cloned by "
-            "download_weights.py) is inserted into sys.path before the tsr import."
+            "from the snapshot_download cache via the current upstream API "
+            "TSR.from_pretrained(snapshot_dir, config_name='config.yaml', weight_name='model.ckpt') "
+            f"then .to({config.DEVICE_3D}); chunked rendering (8192) to bound VRAM; "
+            "extract_mesh(scene_codes, has_vertex_color=False, resolution) with Marching Cubes "
+            "at mc_resolution=256 (torchmcubes on Linux/Kaggle, scikit-image fallback where "
+            "torchmcubes cannot compile, e.g. Windows without MSVC+CUDA toolkit). We take the "
+            "first mesh, then bake vertex colors by sampling the composited image via normalized "
+            "bbox projection. seed is accepted for the pipeline retry-once contract; TSR "
+            "inference itself is deterministic. MOCK_GPU returns a vertex-colored "
+            "icosphere(subdivisions=3, radius=0.8) for CPU-first UI development. InstantMesh "
+            "raises a clear ValueError until the benchmark gate picks the primary backend. "
+            "TripoSR's GitHub repo is NOT pip-installable (no setup.py), so third_party/TripoSR "
+            "(cloned by download_weights.py) is inserted into sys.path before the tsr import."
         ),
         duration_or_latency="MOCK (CPU) verified; TripoSR ~5-15s on T4",
     )

@@ -14,3 +14,10 @@
 - Time Taken / Latency: 1196.5s
 - Technical Explanation: Pinned stable-diffusion-v1-5/stable-diffusion-v1-5 (active repo; runwayml variant is deleted), lllyasviel/sd-controlnet-scribble, and stabilityai/TripoSR, fetched via huggingface_hub.snapshot_download into C:\iit_techzyphr\techzephyr-ml-hackathon\weights_cache; rembg u2net.onnx warmed with a dummy 64x64 pass. Device pinning: Stage 2 on cpu, Stage 4 on cpu; MOCK_GPU=True.
 ---
+### [2026-10-31 19:17:25 IST] — Feature: Step 3 — ControlNet 2D Synthesis & 85% Foreground Isolation
+- Role Owner: Role A (2D Vision Lead)
+- Role Importance & Job: Drives 3D Output Quality (25 pts) via shaded depth cues: converts flat strokes into shaded renders on cuda:0, unloads VRAM before 3D loads, and isolates the foreground at 85% frame occupancy via rembg for Stage 4.
+- Files Touched: src/sketch_to_2d.py
+- Time Taken / Latency: MOCK (CPU) verified; GPU ~4-6s ControlNet + ~1.0s rembg on T4
+- Technical Explanation: SD1.5 + sd-controlnet-scribble in float16, 20 steps, UniPCMultistepScheduler, torch.Generator seed control; on single-GPU (DEVICE_2D == DEVICE_3D) the 2D pipeline is unloaded with gc.collect() + torch.cuda.empty_cache() before Stage 4. rembg.remove yields RGBA, tight alpha>10 bbox crop, LANCZOS rescale to 85% frame occupancy on a transparent 512x512 canvas. MOCK_GPU renders a distance-transform shading so CPU-first UI development runs end-to-end. Stage 2/3 latencies recorded in LAST_TIMINGS for pipeline.py per-stage reporting.
+---
