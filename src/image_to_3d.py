@@ -1,6 +1,7 @@
 """Stage 4 — Per-backend BG compositing + TripoSR 3D reconstruction (cuda:1 / cuda:0)."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,12 @@ import trimesh
 from PIL import Image
 
 import config
+
+# TripoSR's repo is source-only (no setup.py), so the tsr package lives in a
+# git-cloned checkout (third_party/TripoSR, created by download_weights.py).
+_TRIPOSR_SRC = Path(__file__).resolve().parent.parent / "third_party" / "TripoSR"
+if _TRIPOSR_SRC.is_dir() and str(_TRIPOSR_SRC) not in sys.path:
+    sys.path.insert(0, str(_TRIPOSR_SRC))
 
 _triposr_model = None
 
@@ -101,7 +108,7 @@ if __name__ == "__main__":
             "per-backend BG colors (WHITE for TripoSR, GRAY for InstantMesh) and extracts "
             "the 3D mesh on the pinned DEVICE_3D."
         ),
-        files_modified=["src/image_to_3d.py", "requirements.txt"],
+        files_modified=["src/image_to_3d.py", "requirements.txt", "download_weights.py"],
         technical_explanation=(
             "composite_for_backend reads BG colors exclusively from config (Rule 2, never "
             "hardcoded per call). TripoSR path: tsr.system.TSR loaded once as a lazy singleton "
@@ -112,7 +119,9 @@ if __name__ == "__main__":
             "accepted for the pipeline retry-once contract; TSR inference itself is "
             "deterministic. MOCK_GPU returns a vertex-colored icosphere(subdivisions=3, "
             "radius=0.8) for CPU-first UI development. InstantMesh raises a clear ValueError "
-            "until the benchmark gate picks the primary backend."
+            "until the benchmark gate picks the primary backend. TripoSR's GitHub repo is NOT "
+            "pip-installable (no setup.py), so third_party/TripoSR (cloned by "
+            "download_weights.py) is inserted into sys.path before the tsr import."
         ),
         duration_or_latency="MOCK (CPU) verified; TripoSR ~5-15s on T4",
     )
