@@ -132,6 +132,15 @@ def _unload_diffusion_pipeline():
         torch.cuda.empty_cache()
 
 
+def _unload_recon_model():
+    """Release LRM/FlexiCubes before another pipeline stage uses this GPU."""
+    global _recon_model
+    _recon_model = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def _load_recon_model():
     """Load the InstantMesh LRM reconstruction model (lazy singleton).
 
@@ -201,6 +210,12 @@ def _load_recon_model():
 
         print("Loading InstantMesh reconstruction model ...")
         cfg = OmegaConf.load(str(config_path))
+
+        # The upstream large-model config is 128^3, which exceeds a 15 GB T4
+        # during dense FlexiCubes geometry prediction. This changes inference
+        # lattice density only; the checkpoint layout is unchanged.
+        cfg.model_config.params.grid_res = config.INSTANTMESH_GRID_RES
+        print(f"InstantMesh FlexiCubes grid: {config.INSTANTMESH_GRID_RES}^3")
 
         # Inline instantiate_from_config: import the model class and construct it
         target = cfg.model_config.target  # "src.models.lrm_mesh.InstantMesh"
@@ -344,18 +359,25 @@ def reconstruct_3d_mesh(
     if config.MOCK_GPU:
         return _mock_mesh()
 
-    # Step 1: Generate 6 multi-view images via Zero123++
-    print("=== Stage 4: InstantMesh 3D Reconstruction ===")
-    multiview_images, _grid_img = _generate_multiview(rgba_img, seed=seed)
+    # The three stages deliberately never coexist in VRAM. The returned mesh
+    # contains NumPy arrays, so releasing the LRM before Stage 5 is safe.
+    multiview_images = None
+    try:
+        print("=== Stage 4: InstantMesh 3D Reconstruction ===")
+        multiview_images, _grid_img = _generate_multiview(rgba_img, seed=seed)
 
-    # Step 2: Free the diffusion pipeline to make room for the reconstruction model
-    _unload_diffusion_pipeline()
+        # Free Zero123++ before loading LRM/FlexiCubes.
+        _unload_diffusion_pipeline()
 
-    # Step 3: Reconstruct mesh from multi-view images via LRM + FlexiCubes
-    print("Diffusion pipeline freed. Starting mesh reconstruction ...")
-    mesh = _reconstruct_from_multiview(multiview_images)
-
-    return mesh
+        print("Diffusion pipeline freed. Starting mesh reconstruction ...")
+        return _reconstruct_from_multiview(multiview_images)
+    finally:
+        # A retry after an OOM must start with a clean CUDA state, not reuse
+        # failed allocations or retain the model beside the next ControlNet run.
+        del multiview_images
+        _unload_diffusion_pipeline()
+        if not config.KEEP_3D_MODEL_LOADED:
+            _unload_recon_model()
 
 
 if __name__ == "__main__":
@@ -385,7 +407,8 @@ if __name__ == "__main__":
             "from TencentARC/InstantMesh) generates a 960x640 grid of 6 views (3x2 layout, "
             "each 320x320) in fp16 with EulerAncestralDiscreteScheduler. (2) Diffusion pipeline "
             "is unloaded to free VRAM. (3) LRM (instant-mesh-large config: DINOv1-ViT-B/16 "
-            "encoder, 16-layer transformer, 64-res triplane, FlexiCubes grid_res=128) predicts "
+            "encoder, 16-layer transformer, 64-res triplane, FlexiCubes grid_res="
+            f"{config.INSTANTMESH_GRID_RES}) predicts "
             "SDF + deformation on a tetrahedral grid, extracts mesh via FlexiCubes, and queries "
             "vertex colors from the triplane. Coordinate flip applied for GLB compatibility. "
             "MOCK_GPU returns a vertex-colored icosphere for CPU testing."

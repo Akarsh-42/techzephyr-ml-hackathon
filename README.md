@@ -24,7 +24,7 @@ Sketch (draw / upload) + optional text prompt
 [Stage 3] src/sketch_to_2d.py    rembg background removal → tight alpha crop → 85% frame occupancy
         ▼
 [Stage 4] src/image_to_3d.py     InstantMesh: Zero123++ multi-view diffusion (6 views, 75 steps)
-        │                        → LRM FlexiCubes reconstruction (grid_res=128) on cuda:1/cuda:0
+        │                        → LRM FlexiCubes reconstruction (grid_res=64 on a T4) on cuda:1/cuda:0
         │                        Zero123++ unloaded between diffusion and reconstruction to fit VRAM
         ▼
 [Stage 5] src/mesh_validator.py  8-step validation: floor reject → topology purge → unit normalize
@@ -96,7 +96,7 @@ CPU mock mode: full pipeline ~2–3 s.
 
 - **Target hardware:** NVIDIA T4 16GB (Colab or Kaggle). Stage 2 pinned to `cuda:0`, Stage 4 to `cuda:1` when available; both share `cuda:0` on single-GPU machines. On single GPU, the 2D pipeline is unloaded before 3D loads, and Zero123++ is unloaded before the LRM loads.
 - **Single-view occlusion:** unseen backside geometry is hallucinated from multi-view priors; InstantMesh generates 6 consistent views to reduce ambiguity, but it is plausible, not exact.
-- **FlexiCubes resolution:** grid_res=128 captures most geometric detail; very thin features (wireframes, antennas) may be simplified.
+- **FlexiCubes resolution:** the T4-safe default is grid_res=64; very thin features (wireframes, antennas) may be simplified. Set `INSTANTMESH_GRID_RES=128` only on a GPU with substantially more VRAM.
 - **Vertex-color texturing:** InstantMesh queries vertex colors from the triplane; fine texture detail is represented as vertex colors, not UV-mapped textures.
 - **VRAM floor:** ~12GB free needed for the full GPU path (Zero123++ and LRM are loaded/unloaded sequentially); below that, force `MOCK_GPU=1`.
 
@@ -114,7 +114,7 @@ CPU mock mode: full pipeline ~2–3 s.
 | `ModuleNotFoundError: config` / `src` | Run as a module from project root: `python -m pipeline`, not `python pipeline/pipeline.py` |
 | First rembg call hangs | Downloading u2net.onnx (~170 MB, one time) — wait or pre-warm via `python download_weights.py` |
 | NumPy 2.x import errors from torch/rembg | `pip install "numpy<2.0"` |
-| CUDA OOM on Stage 4 | Zero123++ should be unloaded before LRM loads; if still OOM, try on Colab or force `MOCK_GPU=1` |
+| CUDA OOM on Stage 4 | The default `INSTANTMESH_GRID_RES=64` is sized for a single 15 GB Colab T4 and releases Zero123++/LRM between stages. Restart the Colab runtime once after pulling this fix. Keep the default; only set `INSTANTMESH_GRID_RES=128` on a GPU with substantially more VRAM. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is set automatically to reduce fragmentation, but cannot make a 15 GiB allocation fit on a 15 GB GPU. |
 | Flat plane rejected on valid sketch | Retry insurance re-runs with seed+1 automatically; if it persists, the sketch may need stronger depth cues (shading lines) |
 | `ModuleNotFoundError: src.models` | Run `python download_weights.py` once (clones InstantMesh source into `third_party/`) |
 | nvdiffrast build fails | Requires CUDA toolkit matching your PyTorch; install via `pip install git+https://github.com/NVlabs/nvdiffrast/` |
