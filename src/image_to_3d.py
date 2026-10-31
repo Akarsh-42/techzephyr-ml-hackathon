@@ -156,8 +156,21 @@ def _load_recon_model():
         sys.path.insert(0, im_path)
 
     try:
-        print("Loading InstantMesh reconstruction model ...")
+        # --- Auto-clone InstantMesh source if missing ---
         config_path = _INSTANTMESH_SRC / "configs" / "instant-mesh-large.yaml"
+        if not config_path.exists():
+            import subprocess
+            print("InstantMesh source not found — cloning now ...")
+            _INSTANTMESH_SRC.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--depth", "1",
+                 "https://github.com/TencentARC/InstantMesh.git",
+                 str(_INSTANTMESH_SRC)],
+                check=True,
+            )
+            print(f"Cloned InstantMesh -> {_INSTANTMESH_SRC}")
+
+        print("Loading InstantMesh reconstruction model ...")
         cfg = OmegaConf.load(str(config_path))
 
         # Inline instantiate_from_config: import the model class and construct it
