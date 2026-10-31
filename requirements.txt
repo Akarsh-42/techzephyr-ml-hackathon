@@ -1,20 +1,17 @@
 gradio==4.44.0
 torch>=2.0.0
-diffusers>=0.27.0
-transformers>=4.30.0,<5.0
+diffusers>=0.27.0,<0.33.0
+transformers>=4.30.0,<4.48.0
 accelerate>=0.30.0
-# hub>=1.0 removed HfFolder, which gradio 4.44 imports (gradio/oauth.py) — keep 0.x
 huggingface_hub>=0.23.0,<1.0
 safetensors>=0.4.0
 rembg>=2.0.50
-numpy<2.0
+onnxruntime>=1.16.0
+numpy>=1.24.0,<3.0
 opencv-python-headless>=4.8.0
 Pillow>=10.0.0
 trimesh>=4.0.0
-# --- TripoSR runtime deps (tsr source is cloned by download_weights.py) ---
-omegaconf>=2.3.0
 einops>=0.7.0
-imageio>=2.31.0
-# NOTE: torchmcubes is intentionally NOT listed here. It must build against an
-# already-installed torch, so it is installed by download_weights.py via:
-#   pip install --no-build-isolation git+https://github.com/tatsy/torchmcubes.git
+omegaconf>=2.3.0
+audioop-lts; python_version >= '3.13'
+# TripoSR (tsr) core module is integrated directly into the workspace root
