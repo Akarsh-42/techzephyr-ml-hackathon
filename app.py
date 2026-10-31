@@ -3,6 +3,11 @@ from __future__ import annotations
 
 import gradio as gr
 
+# Install the pinned Gradio/gradio-client schema compatibility guard before
+# Blocks builds API metadata during launch. This is project code, not a venv edit.
+import gradio_compat  # noqa: F401
+
+from pipeline import run_pipeline
 # ---------------------------------------------------------------------------
 # Compatibility patch: gradio_client 1.3.0 (pinned by gradio 4.44.0) crashes
 # with "TypeError: argument of type 'bool' is not iterable" while building API
@@ -96,10 +101,4 @@ with gr.Blocks(title="Sketch2Shape AI", theme=gr.themes.Soft()) as demo:
     )
 
 if __name__ == "__main__":
-    demo.queue()
-    try:
-        demo.launch(server_name="127.0.0.1", server_port=7860)
-    except ValueError:
-        # Proxy/firewall blocks the localhost self-check (common on managed
-        # networks / OneDrive-synced machines) — fall back to a share link.
-        demo.launch(server_name="127.0.0.1", server_port=7860, share=True)
+    demo.queue().launch(server_name="127.0.0.1", server_port=7860, share=True)
