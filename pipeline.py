@@ -26,8 +26,9 @@ def run_pipeline(
     timings: dict = {}
     t0 = time.perf_counter()
 
-    raw = normalize_sketch_input(sketch_input, upload_input)
-    scribble = preprocess_sketch(raw)
+    raw, came_from_upload = normalize_sketch_input(sketch_input, upload_input)
+    # Draw-tab strokes need Otsu binarization; uploaded images keep their tones.
+    scribble = preprocess_sketch(raw, binarize=not came_from_upload)
     timings["stage1_preprocess_s"] = round(time.perf_counter() - t0, 2)
 
     status, shaded_2d, isolated, mesh_report, error = "FAILURE", None, None, None, ""
@@ -96,15 +97,18 @@ if __name__ == "__main__":
             "per-stage timing, silent retry-once (seed+1) insurance, and audit logging of "
             "every run, success and failure."
         ),
-        files_modified=["pipeline.py", "src/sketch_to_2d.py"],
+        files_modified=["pipeline.py", "src/preprocess.py"],
         technical_explanation=(
-            "Stage 1 runs once (deterministic); Stages 2-5 are wrapped in a two-attempt loop: "
-            "attempt 2 silently re-runs with seed+1 on any Stage 2-5 exception (Rule 4) before "
-            "the error ever reaches the UI. Stage 2/3 split timings come from "
-            "sketch_to_2d.LAST_TIMINGS; stages 4-5 use time.perf_counter(). Every run calls "
-            "log_pipeline_run with status SUCCESS/RETRY_SUCCESS/FAILURE. mc_resolution (UI "
-            "slider, 128-512) is passed through to reconstruct_3d_mesh so judges can trade "
-            "mesh detail against latency live."
+            "Stage 1 runs once (deterministic) and now branches on input origin: uploaded "
+            "images skip Otsu binarization so their tones survive into ControlNet, drawn "
+            "strokes keep the full Otsu + faint-stroke fallback path. Stages 2-5 are "
+            "wrapped in a two-attempt loop: attempt 2 silently re-runs with seed+1 on any "
+            "Stage 2-5 exception (Rule 4) before the error ever reaches the UI. Stage 2/3 "
+            "split timings come from sketch_to_2d.LAST_TIMINGS; stages 4-5 use "
+            "time.perf_counter(). Every run calls log_pipeline_run with status "
+            "SUCCESS/RETRY_SUCCESS/FAILURE. mc_resolution (UI slider, 128-512) is passed "
+            "through to reconstruct_3d_mesh so judges can trade mesh detail against "
+            "latency live."
         ),
         duration_or_latency=result["report"]["timings"]["total_runtime_s"],
     )
