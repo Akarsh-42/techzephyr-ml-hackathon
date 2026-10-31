@@ -170,6 +170,35 @@ def _load_recon_model():
             )
             print(f"Cloned InstantMesh -> {_INSTANTMESH_SRC}")
 
+        # --- Auto-install build deps if missing (nvdiffrast, xatlas, PyMCubes) ---
+        _missing_simple = []
+        _need_nvdiffrast = False
+        for pkg, imp in [("xatlas", "xatlas"), ("PyMCubes", "mcubes")]:
+            try:
+                __import__(imp)
+            except ImportError:
+                _missing_simple.append(pkg)
+        try:
+            __import__("nvdiffrast")
+        except ImportError:
+            _need_nvdiffrast = True
+
+        if _missing_simple or _need_nvdiffrast:
+            import subprocess as _sp
+            if _need_nvdiffrast:
+                print("Installing ninja + nvdiffrast ...")
+                _sp.run([sys.executable, "-m", "pip", "install", "-q", "ninja"], check=True)
+                r = _sp.run([sys.executable, "-m", "pip", "install", "-q", "nvdiffrast"])
+                if r.returncode != 0:
+                    print("PyPI nvdiffrast failed, trying git source ...")
+                    _sp.run([sys.executable, "-m", "pip", "install", "-q",
+                             "git+https://github.com/NVlabs/nvdiffrast/",
+                             "--no-build-isolation"], check=True)
+            if _missing_simple:
+                print(f"Installing {_missing_simple} ...")
+                _sp.run([sys.executable, "-m", "pip", "install", "-q"] + _missing_simple, check=True)
+            print("Dependencies installed.")
+
         print("Loading InstantMesh reconstruction model ...")
         cfg = OmegaConf.load(str(config_path))
 

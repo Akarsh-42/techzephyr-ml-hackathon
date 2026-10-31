@@ -88,10 +88,22 @@ def install_nvdiffrast() -> None:
     except ImportError:
         pass
     t0 = time.perf_counter()
+    # Ensure ninja is available (required build tool for nvdiffrast)
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "git+https://github.com/NVlabs/nvdiffrast/"],
+        [sys.executable, "-m", "pip", "install", "-q", "ninja"],
         check=True,
     )
+    # Try PyPI package first (pre-built wheels), fall back to git source
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "nvdiffrast"],
+    )
+    if result.returncode != 0:
+        print("PyPI install failed, trying git source ...")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install",
+             "git+https://github.com/NVlabs/nvdiffrast/", "--no-build-isolation"],
+            check=True,
+        )
     print(f"[OK] nvdiffrast installed ({time.perf_counter() - t0:.1f}s)")
 
 
