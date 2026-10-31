@@ -11,10 +11,25 @@ FAINT_STROKE_RATIO = 0.005
 def _to_pil(source) -> Image.Image:
     if isinstance(source, Image.Image):
         return source
+
     if isinstance(source, np.ndarray):
-        return Image.fromarray(source[..., :3] if source.ndim == 3 and source.shape[2] >= 3 else source)
+        array = np.asarray(source)
+
+        if array.ndim == 3 and array.shape[2] == 4:
+            rgba = array.astype(np.uint8)
+            return Image.fromarray(rgba, "RGBA")
+
+        if array.ndim == 3 and array.shape[2] >= 3:
+            rgb = array[..., :3].astype(np.uint8)
+            return Image.fromarray(rgb, "RGB")
+
+        if array.ndim == 2:
+            gray = array.astype(np.uint8)
+            return Image.fromarray(gray, "L").convert("RGBA")
+
     if isinstance(source, str):
         return Image.open(source).convert("RGBA")
+
     raise ValueError(f"Unsupported sketch input type: {type(source)}")
 
 
