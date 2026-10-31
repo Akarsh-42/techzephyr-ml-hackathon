@@ -1,0 +1,36 @@
+# SKETCH2SHAPE AI — pins (v2, aligned with setup.md). 2026-10-31.
+# RULE: after the FIRST successful end-to-end run, re-pin every version from that run
+# (`pip freeze`) and never change them again.
+
+# --- UI / core (works on CPU) ---
+gradio==4.44.0
+opencv-python-headless==4.10.0.84
+Pillow==10.4.0
+numpy==1.26.4
+scipy==1.14.1
+
+# --- mesh ---
+trimesh[easy]==4.4.9
+networkx==3.3
+rembg[gpu]==2.0.59
+onnxruntime-gpu==1.19.2   # exactly ONE ONNX runtime — conflicts if you install both
+
+# --- 2D diffusion (GPU envs: Colab/Kaggle often pre-install torch; do NOT reinstall) ---
+# torch>=2.1.0        # install per your platform, CUDA-matched: https://pytorch.org
+# torchvision>=0.16.0
+diffusers==0.30.3
+transformers==4.44.2
+accelerate==0.34.2
+controlnet-aux==0.0.9
+huggingface-hub==0.25.1
+safetensors
+
+# --- 3D reconstruction (TripoSR) ---
+# Install via repo: git clone https://github.com/VAST-AI-Research/TripoSR && pip install -r requirements.txt
+# torchmcubes, einops==0.8.0, omegaconf==2.3.0 come from there.
+# Optional (InstantMesh benchmark gate): xatlas==0.0.9, moderngl==5.11.1
+# On Ubuntu 22.04+ images, if imports complain: sudo apt-get install -y libgl1 libglib2.0-0 git-lfs
+# (libgl1-mesa-glx NO LONGER EXISTS — never use that package name)
+
+# --- misc ---
+requests==2.32.3
