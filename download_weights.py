@@ -6,11 +6,13 @@ Kaggle Dataset path on the demo machine) and warms rembg's u2net so the
 first real sketch never stalls on Wi-Fi.
 
 Also clones the TripoSR source (the repo is not pip-installable) into
-third_party/TripoSR for src/image_to_3d.py to import from.
+third_party/TripoSR, and installs torchmcubes with --no-build-isolation
+(it must compile against the already-installed torch).
 """
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -27,6 +29,7 @@ MODEL_TARGETS = [
 
 TRIPOSR_SOURCE_URL = "https://github.com/VAST-AI-Research/TripoSR.git"
 TRIPOSR_SOURCE_DIR = Path(__file__).resolve().parent / "third_party" / "TripoSR"
+TORCHMCUBES_URL = "git+https://github.com/tatsy/torchmcubes.git"
 
 
 def prefetch_model_weights() -> None:
@@ -52,6 +55,22 @@ def clone_triposr_source() -> None:
     print(f"[OK] TripoSR source cloned -> {TRIPOSR_SOURCE_DIR} ({time.perf_counter() - t0:.1f}s)")
 
 
+def install_torchmcubes() -> None:
+    """Install torchmcubes; it must build against the installed torch, so no build isolation."""
+    try:
+        import torchmcubes  # noqa: F401
+        print("[OK] torchmcubes already installed")
+        return
+    except ImportError:
+        pass
+    t0 = time.perf_counter()
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--no-build-isolation", TORCHMCUBES_URL],
+        check=True,
+    )
+    print(f"[OK] torchmcubes installed ({time.perf_counter() - t0:.1f}s)")
+
+
 def warm_up_rembg() -> None:
     """First rembg.remove() call downloads u2net.onnx; do it now, not mid-demo."""
     from PIL import Image
@@ -66,6 +85,7 @@ def main() -> None:
     t0 = time.perf_counter()
     prefetch_model_weights()
     clone_triposr_source()
+    install_torchmcubes()
     warm_up_rembg()
     duration = f"{time.perf_counter() - t0:.1f}s"
 
@@ -76,16 +96,20 @@ def main() -> None:
             "Prevents DNF from dead repos & Wi-Fi stalls (Reproducibility 15 pts): locks "
             "active model IDs, per-backend BG colors, and provides 1-click weight caching."
         ),
-        files_modified=["config.py", "download_weights.py", "requirements.txt", "src/image_to_3d.py"],
+        files_modified=[
+            "config.py", "download_weights.py", "requirements.txt", "src/image_to_3d.py",
+        ],
         technical_explanation=(
             "Pinned stable-diffusion-v1-5/stable-diffusion-v1-5 (active repo; runwayml variant "
             "is deleted), lllyasviel/sd-controlnet-scribble, and stabilityai/TripoSR, fetched "
             f"via huggingface_hub.snapshot_download into {config.WEIGHTS_CACHE_DIR}; rembg "
             "u2net.onnx warmed with a dummy 64x64 pass. TripoSR's GitHub repo is NOT "
             "pip-installable (no setup.py/pyproject.toml), so its tsr/ source is git-cloned "
-            "(shallow) into third_party/TripoSR by this script; its runtime deps "
-            "(omegaconf, einops, imageio, torchmcubes) come from requirements.txt. Device "
-            f"pinning: Stage 2 on {config.DEVICE_2D}, Stage 4 on {config.DEVICE_3D}; "
+            "(shallow) into third_party/TripoSR. torchmcubes compiles against the installed "
+            "PyTorch, so it cannot use pip build isolation and is installed by this script "
+            "with --no-build-isolation (deliberately absent from requirements.txt); its "
+            "remaining runtime deps (omegaconf, einops, imageio) come from requirements.txt. "
+            f"Device pinning: Stage 2 on {config.DEVICE_2D}, Stage 4 on {config.DEVICE_3D}; "
             f"MOCK_GPU={config.MOCK_GPU}."
         ),
         duration_or_latency=duration,
