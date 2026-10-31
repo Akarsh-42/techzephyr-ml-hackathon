@@ -27,6 +27,20 @@ def composite_for_backend(rgba_img: Image.Image, backend: str) -> Image.Image:
     return Image.alpha_composite(canvas, rgba).convert("RGB")
 
 
+def to_gradio_3d_orientation(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """TripoSR's official viewer-orientation transform (tsr/utils.py).
+
+    TSR meshes come out y-up in TSR's internal camera convention; the Gradio
+    Model3D viewer (and most glTF consumers) expect a different frame. The
+    official demo applies exactly these two rotations after extract_mesh —
+    skipping it is why objects appeared rotated 90 degrees in the viewer while
+    the vertex colors (baked per-vertex, riding the geometry) looked "straight".
+    """
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
+    return mesh
+
+
 def _load_triposr():
     global _triposr_model
     if _triposr_model is None:
@@ -72,7 +86,10 @@ def _extract_mesh_with_texture(
     """
     try:
         mesh = model.extract_mesh(
-            scene_codes, has_vertex_color=True, resolution=mc_resolution
+            scene_codes,
+            has_vertex_color=True,
+            resolution=mc_resolution,
+            threshold=config.TRIPOSR_MC_THRESHOLD,
         )[0]
         has_uv = getattr(mesh.visual, "uv", None) is not None
         if not has_uv:
@@ -80,7 +97,10 @@ def _extract_mesh_with_texture(
         return mesh
     except Exception:
         mesh = model.extract_mesh(
-            scene_codes, has_vertex_color=False, resolution=mc_resolution
+            scene_codes,
+            has_vertex_color=False,
+            resolution=mc_resolution,
+            threshold=config.TRIPOSR_MC_THRESHOLD,
         )[0]
         mesh.visual.vertex_colors = _sample_vertex_colors(mesh, composite)
         return mesh
@@ -107,6 +127,9 @@ def reconstruct_3d_mesh(
         scene_codes = model([composite], device)
         mesh = _extract_mesh_with_texture(model, scene_codes, composite, mc_resolution)
 
+    # Official demo applies this right after extraction — required for the
+    # Gradio Model3D viewer to display the object upright, colors aligned.
+    mesh = to_gradio_3d_orientation(mesh)
     return mesh
 
 
@@ -120,7 +143,7 @@ if __name__ == "__main__":
 
     triposr_bg = composite_for_backend(rgba, "triposr")
     instant_bg = composite_for_backend(rgba, "instantmesh")
-    assert np.asarray(triposr_bg)[0, 0].tolist() == [255, 255, 255]
+    assert np.asarray(triposr_bg)[0, 0].tolist() == [127, 127, 127]
     assert np.asarray(instant_bg)[0, 0].tolist() == [127, 127, 127]
 
     mesh = reconstruct_3d_mesh(rgba)
@@ -133,20 +156,24 @@ if __name__ == "__main__":
         role_owner="Role B (3D Lead)",
         role_importance_and_job=(
             "Core engine for 3D Output Quality (25 pts) & Efficiency (20 pts): routes "
-            "per-backend BG colors (WHITE for TripoSR, GRAY for InstantMesh) and extracts "
-            "the 3D mesh on the pinned DEVICE_3D with native multi-view texturing."
+            "per-backend BG colors and extracts the 3D mesh on the pinned DEVICE_3D "
+            "with native multi-view texturing, oriented for the Gradio viewer."
         ),
-        files_modified=["src/image_to_3d.py", "requirements.txt", "download_weights.py"],
+        files_modified=["src/image_to_3d.py", "config.py"],
         technical_explanation=(
-            "composite_for_backend reads BG colors exclusively from config. TripoSR path: "
-            "tsr.system.TSR loaded once as a lazy singleton from the snapshot_download cache "
-            "via TSR.from_pretrained(snapshot_dir, config_name='config.yaml', "
-            "weight_name='model.ckpt') then .to(DEVICE_3D); chunked rendering (8192) to bound "
-            "VRAM. _extract_mesh_with_texture first tries TSR's native textured extraction "
-            "(has_vertex_color=True), which samples colors from rendered views of the "
-            "reconstruction so back-facing vertices are colored correctly; on any failure "
-            "it falls back to extract_mesh(has_vertex_color=False) plus bbox vertex-color "
-            "baking. mc_resolution is caller-tunable (UI slider 128-512). MOCK_GPU returns "
+            "composite_for_backend reads BG colors exclusively from config (both backends "
+            "now use 0.5 GRAY, matching the official TripoSR demo's fill_background — "
+            "pure white left a faint SDF shell that surfaced as a thin background slab "
+            "behind the object). TripoSR path: tsr.system.TSR loaded once as a lazy "
+            "singleton from the snapshot_download cache, chunked rendering (8192) to "
+            "bound VRAM. _extract_mesh_with_texture tries TSR's native textured "
+            "extraction (has_vertex_color=True, threshold=TRIPOSR_MC_THRESHOLD) so "
+            "back-facing vertices are colored correctly; falls back to bbox "
+            "vertex-color baking. After extraction, to_gradio_3d_orientation applies "
+            "the official -90deg X / +90deg Y rotations (copied from tsr/utils.py) so "
+            "the Gradio Model3D viewer shows the object upright — previously the "
+            "geometry appeared rotated 90 degrees while vertex colors looked straight. "
+            "mc_resolution is caller-tunable (UI slider 128-512). MOCK_GPU returns "
             "an icosphere for CPU-first UI development."
         ),
         duration_or_latency="TripoSR ~5-15s on T4 (textured path slightly higher)",
