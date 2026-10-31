@@ -12,10 +12,47 @@ def _to_pil(source) -> Image.Image:
     if isinstance(source, Image.Image):
         return source
     if isinstance(source, np.ndarray):
-        return Image.fromarray(source[..., :3] if source.ndim == 3 and source.shape[2] >= 3 else source)
+        if source.ndim == 3 and source.shape[2] >= 4:
+            return Image.fromarray(source[..., :4])
+        if source.ndim == 3 and source.shape[2] == 3:
+            return Image.fromarray(source)
+        if source.ndim == 3 and source.shape[2] == 1:
+            source = source[..., 0]
+        return Image.fromarray(source)
     if isinstance(source, str):
         return Image.open(source).convert("RGBA")
     raise ValueError(f"Unsupported sketch input type: {type(source)}")
+
+
+def _composite_sketchpad_layers(sketch_input: dict) -> Image.Image | None:
+    """Rebuild a Sketchpad image when Gradio omits its composite image."""
+    layer_sources = [layer for layer in sketch_input.get("layers", []) if layer is not None]
+    background_source = sketch_input.get("background")
+    if not layer_sources and background_source is None:
+        return None
+
+    if background_source is not None:
+        background = _to_pil(background_source).convert("RGBA")
+        canvas = Image.alpha_composite(
+            Image.new("RGBA", background.size, (255, 255, 255, 255)), background
+        )
+    else:
+        first_layer = _to_pil(layer_sources[0]).convert("RGBA")
+        canvas = Image.new("RGBA", first_layer.size, (255, 255, 255, 255))
+
+    for layer_source in layer_sources:
+        layer = _to_pil(layer_source).convert("RGBA")
+        if layer.size != canvas.size:
+            layer = layer.resize(canvas.size, Image.Resampling.LANCZOS)
+        canvas = Image.alpha_composite(canvas, layer)
+    return canvas
+
+
+def _visible_rgb(image: Image.Image) -> Image.Image:
+    image = image.convert("RGBA")
+    return Image.alpha_composite(
+        Image.new("RGBA", image.size, (255, 255, 255, 255)), image
+    ).convert("RGB")
 
 
 def normalize_sketch_input(
@@ -24,9 +61,15 @@ def normalize_sketch_input(
 ) -> Image.Image:
     img = _to_pil(upload_input) if upload_input is not None else None
     if img is None and isinstance(sketch_input, dict):
-        composite = sketch_input.get("composite") or sketch_input.get("background")
+        composite = sketch_input.get("composite")
         if composite is not None:
             img = _to_pil(composite)
+        if img is None or float(np.asarray(_visible_rgb(img)).std()) < 3.0:
+            layered_image = _composite_sketchpad_layers(sketch_input)
+            if layered_image is not None:
+                img = layered_image
+        if img is None and sketch_input.get("background") is not None:
+            img = _to_pil(sketch_input["background"])
     elif img is None and sketch_input is not None:
         img = _to_pil(sketch_input)
 
