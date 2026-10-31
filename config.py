@@ -20,7 +20,7 @@ BG_COLOR_TRIPOSR = (255, 255, 255)      # pure WHITE for TripoSR
 BG_COLOR_INSTANTMESH = (127, 127, 127)  # neutral GRAY for InstantMesh
 
 # --- 3D backend selection (Hour 5-8 benchmark gate decides) -----------------
-PRIMARY_3D_BACKEND = os.getenv("PRIMARY_3D_BACKEND", "triposr")  # "triposr" | "instantmesh"
+PRIMARY_3D_BACKEND = os.getenv("PRIMARY_3D_BACKEND", "instantmesh")  # "instantmesh" | "triposr"
 
 # --- Device pinning (Kaggle T4 x2 does NOT pool VRAM) -----------------------
 DEVICE_2D = "cuda:0" if torch.cuda.is_available() else "cpu"

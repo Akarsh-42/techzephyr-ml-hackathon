@@ -2,18 +2,25 @@ gradio==4.44.0
 fastapi<0.113.0
 starlette<0.40.0
 torch>=2.0.0
-diffusers>=0.27.0,<0.33.0
+torchvision>=0.15.0
+diffusers>=0.27.0
 transformers>=4.30.0,<4.48.0
 accelerate>=0.30.0
 huggingface_hub>=0.23.0,<1.0
 safetensors>=0.4.0
 rembg>=2.0.50
 onnxruntime>=1.16.0
-numpy>=1.24.0,<3.0
+numpy>=1.24.0,<2.0
 opencv-python-headless>=4.8.0
 Pillow>=10.0.0
 trimesh>=4.0.0
 einops>=0.7.0
 omegaconf>=2.3.0
+pytorch-lightning>=2.1.0
+torchmetrics
+xatlas
+PyMCubes
+plyfile
 audioop-lts; python_version >= '3.13'
-# TripoSR (tsr) core module is integrated directly into the workspace root
+# nvdiffrast: installed by download_weights.py (git+https://github.com/NVlabs/nvdiffrast/)
+# InstantMesh source module is cloned into third_party/InstantMesh by download_weights.py

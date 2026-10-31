@@ -7,7 +7,7 @@ Turn a single-view 2D sketch into a textured, downloadable 3D asset (.glb / .obj
 
 ## Objective
 
-Anyone with a rough pencil sketch can produce a usable 3D model — draw or upload a sketch, optionally describe the object with a text prompt, and receive an interactive 3D preview plus verified `.glb`/`.obj` downloads. The pipeline preserves the sketch's structure (via ControlNet conditioning) while adding plausible depth, shading, and color.
+Anyone with a rough pencil sketch can produce a usable 3D model — draw or upload a sketch, optionally describe the object with a text prompt, and receive an interactive 3D preview plus verified `.glb`/`.obj` downloads. The pipeline preserves the sketch's structure (via ControlNet conditioning) while adding plausible depth, shading, and color. 3D reconstruction uses InstantMesh's multi-view diffusion + Large Reconstruction Model for high-quality geometry.
 
 ## Architecture
 
@@ -23,8 +23,9 @@ Sketch (draw / upload) + optional text prompt
         ▼
 [Stage 3] src/sketch_to_2d.py    rembg background removal → tight alpha crop → 85% frame occupancy
         ▼
-[Stage 4] src/image_to_3d.py     TripoSR Marching Cubes (res 256) on cuda:1/cuda:0
-        │                        BG routing via config: TripoSR → white, InstantMesh → gray
+[Stage 4] src/image_to_3d.py     InstantMesh: Zero123++ multi-view diffusion (6 views, 75 steps)
+        │                        → LRM FlexiCubes reconstruction (grid_res=128) on cuda:1/cuda:0
+        │                        Zero123++ unloaded between diffusion and reconstruction to fit VRAM
         ▼
 [Stage 5] src/mesh_validator.py  8-step validation: floor reject → topology purge → unit normalize
         │                        → anti-plane (min_axis_depth ≥ 0.05) → Laplacian smooth
@@ -38,10 +39,10 @@ app.py (Gradio 4.44.0)           3D viewer, .glb/.obj downloads, per-stage timin
 ## Quickstart
 
 ```bash
-pip install -r requirements.txt     # torch first; torchmcubes installed by the next step
-python download_weights.py          # one-time: prefetch SD1.5/ControlNet/TripoSR weights, clone
-                                    # TripoSR source into third_party/, install torchmcubes
-                                    # (--no-build-isolation), warm rembg u2net
+pip install -r requirements.txt     # torch first; nvdiffrast installed by the next step
+python download_weights.py          # one-time: prefetch SD1.5/ControlNet/Zero123++/InstantMesh
+                                    # weights, clone InstantMesh source into third_party/,
+                                    # install nvdiffrast, xatlas, PyMCubes, warm rembg u2net
 python app.py                       # UI at http://localhost:7860
 ```
 
@@ -69,41 +70,42 @@ python -m pipeline              # full end-to-end, exports outputs/run_*.glb/.ob
 | --- | --- | --- |
 | Stable Diffusion 1.5 | `stable-diffusion-v1-5/stable-diffusion-v1-5` | CreativeML OpenRAIL-M |
 | ControlNet-Scribble | `lllyasviel/sd-controlnet-scribble` | Apache-2.0 / OpenRAIL-M |
-| TripoSR (weights) | `stabilityai/TripoSR` | MIT |
-| TripoSR (source) | `VAST-AI-Research/TripoSR` — cloned to `third_party/` by `download_weights.py` (repo is not pip-installable; runtime deps in requirements.txt) | MIT |
-| torchmcubes | `git+https://github.com/tatsy/torchmcubes.git` — installed by `download_weights.py` with `--no-build-isolation` (compiles against installed torch) | MIT |
+| Zero123++ | `sudo-ai/zero123plus-v1.2` | Apache-2.0 |
+| InstantMesh (weights) | `TencentARC/InstantMesh` | Apache-2.0 |
+| InstantMesh (source) | `TencentARC/InstantMesh` — cloned to `third_party/` by `download_weights.py` (repo is not pip-installable; runtime deps in requirements.txt) | Apache-2.0 |
+| nvdiffrast | `git+https://github.com/NVlabs/nvdiffrast/` — installed by `download_weights.py` (required for FlexiCubes rasterization) | NVIDIA Source Code License |
 | rembg | PyPI `rembg` (u2net) | MIT |
 | trimesh | PyPI `trimesh` | MIT |
 | Gradio (pinned) | `gradio==4.44.0` | Apache-2.0 |
 
-## Runtime table (Kaggle T4 x2, measured assumptions)
+## Runtime table (Colab/Kaggle T4, measured assumptions)
 
 | Stage | Component | Time |
 | --- | --- | --- |
 | 1 | Preprocess (Otsu + fallback) | ~0.2 s |
 | 2 | ControlNet 2D synthesis | ~4–6 s |
 | 3 | rembg isolation + recenter | ~1.0 s |
-| 4 | TripoSR reconstruction | ~5–15 s |
+| 4a | Zero123++ multi-view generation (75 steps) | ~15–25 s |
+| 4b | LRM FlexiCubes mesh extraction | ~10–20 s |
 | 5 | Validation + export + reload | ~0.5 s |
-| — | **Total** | **~12–22 s** |
+| — | **Total** | **~30–55 s** |
 
 CPU mock mode: full pipeline ~2–3 s.
 
 ## Hardware assumptions & limitations
 
-- **Target hardware:** NVIDIA T4 16GB (x2 on Kaggle). Stage 2 pinned to `cuda:0`, Stage 4 to `cuda:1` when available; both share `cuda:0` on single-GPU machines. Dual T4s do **not** pool VRAM — hence the strict 2D-pipeline unload before 3D load.
-- **Single-view occlusion:** unseen backside geometry is hallucinated from priors; it is plausible, not exact.
-- **Marching-cubes quantization:** very thin features (wireframes, antennas) below the 256³ grid resolution may be lost or merged.
-- **Vertex-color texturing:** TripoSR output carries vertex colors sampled from the generated image; fine texture detail is not preserved.
-- **VRAM floor:** ~6GB free needed for the GPU path; below that, force `MOCK_GPU=1`.
-- **InstantMesh backend:** wired for background compositing but pending the benchmark gate; `triposr` is the default `PRIMARY_3D_BACKEND`.
+- **Target hardware:** NVIDIA T4 16GB (Colab or Kaggle). Stage 2 pinned to `cuda:0`, Stage 4 to `cuda:1` when available; both share `cuda:0` on single-GPU machines. On single GPU, the 2D pipeline is unloaded before 3D loads, and Zero123++ is unloaded before the LRM loads.
+- **Single-view occlusion:** unseen backside geometry is hallucinated from multi-view priors; InstantMesh generates 6 consistent views to reduce ambiguity, but it is plausible, not exact.
+- **FlexiCubes resolution:** grid_res=128 captures most geometric detail; very thin features (wireframes, antennas) may be simplified.
+- **Vertex-color texturing:** InstantMesh queries vertex colors from the triplane; fine texture detail is represented as vertex colors, not UV-mapped textures.
+- **VRAM floor:** ~12GB free needed for the full GPU path (Zero123++ and LRM are loaded/unloaded sequentially); below that, force `MOCK_GPU=1`.
 
 ## Reproducibility
 
-- All model weights are fetched from the verified active Hugging Face repos listed above via `download_weights.py` (`huggingface_hub.snapshot_download` into `weights_cache/`); TripoSR's `tsr` source is shallow-cloned from GitHub into `third_party/TripoSR` by the same script, and torchmcubes is installed by the same script with `--no-build-isolation` because it must compile against the already-installed PyTorch.
-- `gradio==4.44.0`, `numpy<2.0`, and all other versions pinned in `requirements.txt`.
+- All model weights are fetched from the verified active Hugging Face repos listed above via `download_weights.py` (`huggingface_hub.snapshot_download` and `hf_hub_download`); InstantMesh's source is shallow-cloned from GitHub into `third_party/InstantMesh` by the same script, and nvdiffrast is installed by the same script from GitHub.
+- `gradio==4.44.0`, `numpy<3.0`, and all other versions pinned in `requirements.txt`.
 - Every pipeline run (success **and** failure) is logged with IST timestamps, stage timings, and mesh metrics in `done_so_far.md` / `what_we_did.md` — the project's continuous audit trail, generated by `src/logger.py`.
-- Deterministic seeds: same sketch + same seed → same 2D render and mesh.
+- Deterministic seeds: same sketch + same seed → same 2D render and multi-view generation → same mesh.
 
 ## Troubleshooting
 
@@ -112,11 +114,11 @@ CPU mock mode: full pipeline ~2–3 s.
 | `ModuleNotFoundError: config` / `src` | Run as a module from project root: `python -m pipeline`, not `python pipeline/pipeline.py` |
 | First rembg call hangs | Downloading u2net.onnx (~170 MB, one time) — wait or pre-warm via `python download_weights.py` |
 | NumPy 2.x import errors from torch/rembg | `pip install "numpy<2.0"` |
-| CUDA OOM on Stage 4 | 2D pipeline unload should have freed VRAM; if not, reduce `mc_resolution` or force `MOCK_GPU=1` |
+| CUDA OOM on Stage 4 | Zero123++ should be unloaded before LRM loads; if still OOM, try on Colab or force `MOCK_GPU=1` |
 | Flat plane rejected on valid sketch | Retry insurance re-runs with seed+1 automatically; if it persists, the sketch may need stronger depth cues (shading lines) |
-| `ModuleNotFoundError: tsr` | Run `python download_weights.py` once (clones TripoSR source into `third_party/`) |
-| torchmcubes metadata error / "must be built against an installed PyTorch" | It can't use pip build isolation — installed automatically by `download_weights.py` with `--no-build-isolation`; manually: `pip install --no-build-isolation git+https://github.com/tatsy/torchmcubes.git` |
-| torchmcubes build fails on Windows | Install Visual Studio Build Tools (C++ workload) and CMake first; or develop on CPU mock mode (`MOCK_GPU=1`), which never imports torchmcubes |
+| `ModuleNotFoundError: src.models` | Run `python download_weights.py` once (clones InstantMesh source into `third_party/`) |
+| nvdiffrast build fails | Requires CUDA toolkit matching your PyTorch; install via `pip install git+https://github.com/NVlabs/nvdiffrast/` |
+| nvdiffrast build fails on Windows | Install Visual Studio Build Tools (C++ workload) and CUDA toolkit; or develop on CPU mock mode (`MOCK_GPU=1`) |
 
 ## Role summary (from the audit log)
 
