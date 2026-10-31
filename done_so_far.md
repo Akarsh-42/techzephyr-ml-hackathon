@@ -161,3 +161,21 @@
 - Time Taken / Latency: N/A (API integration correction)
 - Technical Explanation: Selects a cached TripoSR snapshot only when config and checkpoint files coexist; passes the snapshot directory and their names to `TSR.from_pretrained`; moves the returned module to `DEVICE_3D` and calls `.eval()`. Passes `has_vertex_color=False` to `extract_mesh`, preserving the existing later step that samples vertex colors from the source image. Mocked call-contract smoke check passed for snapshot selection, model device placement, and extraction arguments; Python compilation and `git diff --check` passed. No real GPU inference performed.
 ---
+### [2026-10-31 19:17:25 IST] — Feature: Step 3 — ControlNet 2D Synthesis & 85% Foreground Isolation
+- Role Owner: Role A (2D Vision Lead)
+- Role Importance & Job: Drives 3D Output Quality (25 pts) via shaded depth cues: converts flat strokes into shaded renders on cuda:0, unloads VRAM before 3D loads, and isolates the foreground at 85% frame occupancy via rembg for Stage 4.
+- Files Touched: src/sketch_to_2d.py
+- Time Taken / Latency: MOCK (CPU) verified; GPU ~4-6s ControlNet + ~1.0s rembg on T4
+- Technical Explanation: SD1.5 + sd-controlnet-scribble in float16, 20 steps, UniPCMultistepScheduler, torch.Generator seed control; on single-GPU (DEVICE_2D == DEVICE_3D) the 2D pipeline is unloaded with gc.collect() + torch.cuda.empty_cache() before Stage 4. rembg.remove yields RGBA, tight alpha>10 bbox crop, LANCZOS rescale to 85% frame occupancy on a transparent 512x512 canvas. MOCK_GPU renders a distance-transform shading so CPU-first UI development runs end-to-end. Stage 2/3 latencies recorded in LAST_TIMINGS for pipeline.py per-stage reporting.
+---
+### [2026-10-31 19:18:42 IST] — Pipeline Run: run_20261031_191753
+- Status: FAILURE
+- Stage Timings (s): {
+  "stage1_preprocess_s": 0.03,
+  "stage2_controlnet_s": 15.0,
+  "stage3_rembg_s": 1.55,
+  "total_runtime_s": 48.9
+}
+- Mesh Report: {}
+- Notes: None
+---

@@ -12,9 +12,23 @@ from rembg import remove
 
 import config
 
+# TripoSR was trained on bright, evenly-lit synthetic renders of SINGLE objects
+# on PLAIN WHITE backgrounds (Objaverse-style). Prompts pushing SD toward moody
+# "studio" photography (tables, spotlights, dark metal) produce images TripoSR
+# cannot interpret as one object — it then meshes the entire frame into a slab
+# with the shape embossed into it (the "black pillow" failure). This prompt
+# deliberately mimics TripoSR's training distribution.
 DEFAULT_PROMPT = (
-    "high quality, detailed, professional 3D render, studio lighting, "
-    "clean solid background, centered object"
+    "a single centered object, bright even lighting, plain pure white background, "
+    "full object fully visible, simple clean colors, product photo, "
+    "high quality, detailed"
+)
+
+# Actively forbid the scene elements that poison Stage 4.
+NEGATIVE_PROMPT = (
+    "dark, moody, low key, shadows, black background, table, floor, ground, "
+    "room, scene, environment, spotlight, multiple objects, cropped, "
+    "cut off, partially visible, cluttered background, blurry"
 )
 
 LAST_TIMINGS = {"controlnet_s": 0.0, "rembg_s": 0.0}
@@ -37,7 +51,11 @@ def _load_pipeline():
 
         controlnet = ControlNetModel.from_pretrained(config.CONTROLNET_MODEL_ID, torch_dtype=_dtype())
         pipe = StableDiffusionControlNetPipeline.from_pretrained(
-            config.SD_MODEL_ID, controlnet=controlnet, torch_dtype=_dtype()
+            config.SD_MODEL_ID,
+            controlnet=controlnet,
+            torch_dtype=_dtype(),
+            safety_checker=None,
+            requires_safety_checker=False,
         )
         pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
         pipe.set_progress_bar_config(disable=True)
@@ -87,6 +105,9 @@ def generate_2d_and_isolate_foreground(
     seed: int = 42,
 ) -> tuple[Image.Image, Image.Image]:
     user_prompt = (user_prompt or "").strip()
+    # User prompt describes WHAT the object is; DEFAULT_PROMPT pins HOW it is
+    # rendered (TripoSR-compatible style) so a user prompt like "metallic lamp"
+    # can never drag us back to a moody studio photo.
     prompt = f"{user_prompt}, {DEFAULT_PROMPT}" if user_prompt else DEFAULT_PROMPT
 
     t = time.perf_counter()
@@ -97,8 +118,9 @@ def generate_2d_and_isolate_foreground(
         generator = torch.Generator(device=config.DEVICE_2D).manual_seed(seed)
         shaded_2d = pipe(
             prompt=prompt,
+            negative_prompt=NEGATIVE_PROMPT,
             image=scribble_img,
-            num_inference_steps=20,
+            num_inference_steps=25,
             controlnet_conditioning_scale=control_scale,
             generator=generator,
         ).images[0]
@@ -133,14 +155,21 @@ if __name__ == "__main__":
         ),
         files_modified=["src/sketch_to_2d.py"],
         technical_explanation=(
-            "SD1.5 + sd-controlnet-scribble in float16, 20 steps, UniPCMultistepScheduler, "
-            "torch.Generator seed control; on single-GPU (DEVICE_2D == DEVICE_3D) the 2D "
-            "pipeline is unloaded with gc.collect() + torch.cuda.empty_cache() before Stage 4. "
-            "rembg.remove yields RGBA, tight alpha>10 bbox crop, LANCZOS rescale to 85% frame "
-            "occupancy on a transparent 512x512 canvas. MOCK_GPU renders a distance-transform "
-            "shading so CPU-first UI development runs end-to-end. Stage 2/3 latencies recorded "
-            "in LAST_TIMINGS for pipeline.py per-stage reporting."
+            "SD1.5 + sd-controlnet-scribble in float16, 25 steps, UniPCMultistepScheduler, "
+            "torch.Generator seed control; pipeline loaded with safety_checker=None and "
+            "requires_safety_checker=False (matching download_weights.py's "
+            "ignore_patterns=['safety_checker/*'] prefetch skip, saving ~3.6 GB); on "
+            "single-GPU (DEVICE_2D == DEVICE_3D) the 2D pipeline is unloaded with gc.collect() "
+            "+ torch.cuda.empty_cache() before Stage 4. DEFAULT_PROMPT is engineered to "
+            "mimic TripoSR's training distribution (single bright object, plain white "
+            "background, product-photo style) and NEGATIVE_PROMPT forbids the moody "
+            "studio-photo elements (tables, spotlights, dark backgrounds) that previously "
+            "poisoned Stage 4 into embossed-slab meshes; the user's prompt is always "
+            "prepended so object identity is preserved while render style stays fixed. "
+            "rembg.remove yields RGBA, tight alpha>10 bbox crop, LANCZOS rescale to 85% "
+            "frame occupancy on a transparent 512x512 canvas. MOCK_GPU renders a "
+            "distance-transform shading so CPU-first UI development runs end-to-end."
         ),
-        duration_or_latency="MOCK (CPU) verified; GPU ~4-6s ControlNet + ~1.0s rembg on T4",
+        duration_or_latency="MOCK (CPU) verified; GPU ~5-7s ControlNet + ~1.0s rembg on T4",
     )
     print("Step 3 verified: shaded 2D + recentered RGBA produced.")

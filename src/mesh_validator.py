@@ -37,9 +37,14 @@ def validate_and_export_mesh(
             f"Flat plane detected: min_axis_depth={min_axis_depth:.4f} < {config.MIN_AXIS_DEPTH}"
         )
 
-    # 5. Normals & controlled Laplacian smoothing
+    # 5. Normals & shrink-free Taubin smoothing.
+    # Plain Laplacian smoothing shrinks the mesh inward every iteration (deflated,
+    # "mushy" look). Taubin alternates positive/negative lambda so high-frequency
+    # noise is removed WITHOUT volume loss, so fine shape detail survives.
     trimesh.repair.fix_normals(mesh)
-    trimesh.smoothing.filter_laplacian(mesh, iterations=smoothing_iterations)
+    trimesh.smoothing.filter_taubin(
+        mesh, lamb=0.5, nu=-0.53, iterations=max(10, smoothing_iterations * 10)
+    )
 
     # 6. Dual export + file-size floor check
     os.makedirs(output_dir, exist_ok=True)
@@ -105,19 +110,20 @@ if __name__ == "__main__":
         role_owner="Role B (3D Lead)",
         role_importance_and_job=(
             "Guarantees Pipeline Validity (20 pts) & judge file opening (Reproducibility 15 pts): "
-            "enforces >=100 verts/faces, min_axis_depth >=0.05 anti-plane check, 1-iter "
-            "Laplacian smooth, .glb/.obj dual export, and trimesh.load() reload verification."
+            "enforces >=100 verts/faces, min_axis_depth >=0.05 anti-plane check, shrink-free "
+            "Taubin smoothing, .glb/.obj dual export, and trimesh.load() reload verification."
         ),
         files_modified=["src/mesh_validator.py"],
         technical_explanation=(
-            "Floor reject (<100 verts OR faces) per Rule 5; topology purge via nondegenerate/"
-            "unique face masks + merge_vertices + unreferenced removal; centroid centering then "
-            "unit-normalization (longest axis -> [-0.5, 0.5]); anti-plane ratio min/max extent "
-            "with hard 0.05 floor per Rule 6 (never 1e-4); trimesh.repair.fix_normals + "
-            "filter_laplacian(iterations=1); dual GLB (colors preserved) and OBJ export with "
-            ">1024-byte checks per Rule 7; trimesh.load(force='mesh') reload check proving the "
-            "downloaded artifact opens. Self-check also asserts a flat plane and a tiny mesh "
-            "are both rejected."
+            "Floor reject (<100 verts OR faces); topology purge via nondegenerate/unique face "
+            "masks + merge_vertices + unreferenced removal; centroid centering then unit-"
+            "normalization (longest axis -> [-0.5, 0.5]); anti-plane ratio min/max extent with "
+            "hard 0.05 floor; trimesh.repair.fix_normals + filter_taubin(lamb=0.5, nu=-0.53, "
+            "iterations>=10) — Taubin's alternating lambda/nu removes noise without the volume "
+            "shrinkage plain Laplacian causes; dual GLB (colors/texture preserved) and OBJ "
+            "export with >1024-byte checks; trimesh.load(force='mesh') reload check proving "
+            "the downloaded artifact opens. Self-check also asserts a flat plane and a tiny "
+            "mesh are both rejected."
         ),
         duration_or_latency="~0.5s per mesh on CPU",
     )

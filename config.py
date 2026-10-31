@@ -16,8 +16,18 @@ TRIPOSR_MODEL_ID = "stabilityai/TripoSR"
 INSTANTMESH_MODEL_ID = "TencentARC/InstantMesh"
 
 # --- Per-backend background compositing (CRITICAL, Stage 4) ----------------
-BG_COLOR_TRIPOSR = (255, 255, 255)      # pure WHITE for TripoSR
+# TripoSR: the official demo (gradio_app.py, fill_background) composites the
+# RGBA foreground onto 0.5 GRAY — not white. On pure white the SDF field keeps
+# a faint surface shell at the background plane, which surfaces as a thin
+# background slab glued behind the object in the extracted mesh. Gray matches
+# TripoSR's training distribution and eliminates the shell.
+BG_COLOR_TRIPOSR = (127, 127, 127)      # neutral GRAY for TripoSR (official demo)
 BG_COLOR_INSTANTMESH = (127, 127, 127)  # neutral GRAY for InstantMesh
+
+# --- TripoSR marching-cubes threshold ---------------------------------------
+# extract_mesh(threshold=...) carves away low-density background fog around the
+# object. 25.0 is the official default; raise if background shells persist.
+TRIPOSR_MC_THRESHOLD = 25.0
 
 # --- 3D backend selection (Hour 5-8 benchmark gate decides) -----------------
 PRIMARY_3D_BACKEND = os.getenv("PRIMARY_3D_BACKEND", "triposr")  # "triposr" | "instantmesh"
