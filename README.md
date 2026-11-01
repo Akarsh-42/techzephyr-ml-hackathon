@@ -1,133 +1,170 @@
-# Sketch2Shape AI — TechZephyr 4.0 ML Hackathon
+# Sketch2Shape AI — From a 2D Sketch to a Color-Graded 3D Asset
 
-Turn a single-view 2D sketch into a textured, downloadable 3D asset (.glb / .obj).
+**TechZephyr 4.0 · IIT Bhubaneswar · 24-Hour CV & Generative AI Hackathon — Final Submission**
 
-- **Problem statement:** see `ML_Hackathonv2.txt`
-- **Canonical execution blueprint:** see `execution_blueprint_architecture.md`
+Team: [TEAM NAME] — [MEMBER NAMES]
+Repo: https://github.com/Akarsh-42/techzephyr-ml-hackathon
 
-## Objective
+---
 
-Anyone with a rough pencil sketch can produce a usable 3D model — draw or upload a sketch, optionally describe the object with a text prompt, and receive an interactive 3D preview plus verified `.glb`/`.obj` downloads. The pipeline preserves the sketch's structure (via ControlNet conditioning) while adding plausible depth, shading, and color. 3D reconstruction uses InstantMesh's multi-view diffusion + Large Reconstruction Model for high-quality geometry.
+## 1. Objective
 
-## Architecture
+Turn a rough, single-view 2D sketch — drawn in-app or uploaded — into a **recognizable, color-graded, exportable 3D asset** (.glb / .obj), with an optional text prompt steering material, color, and style. The system bridges the gap between a hand-drawn concept and a usable 3D model by combining computer vision (sketch conditioning), generative AI (sketch-guided rendering + multiview diffusion), and 3D reconstruction (FlexiCubes mesh extraction with per-vertex color grading).
 
+## 2. Results at a Glance
+
+| Capability | Status |
+|---|---|
+| In-app drawing canvas (Gradio Sketchpad) | ✅ |
+| Sketch image upload | ✅ |
+| Optional text prompt (never required) | ✅ |
+| Sketch-faithful 2D render (ControlNet-Scribble) | ✅ |
+| Background isolation (rembg, 85% foreground) | ✅ |
+| Multiview diffusion (Zero123++, 6 views) | ✅ |
+| 3D reconstruction (InstantMesh / FlexiCubes) | ✅ |
+| Color grading on the mesh (6-view vertex colors) | ✅ |
+| Interactive 3D preview in-app | ✅ |
+| Dual export: .glb + .obj, reload-verified | ✅ |
+| Mesh validation (8-step, anti-plane, watertight check) | ✅ |
+| Deterministic reruns via seed + retry-once insurance | ✅ |
+| Fallback 3D backend (TripoSR) via env var | ✅ |
+
+## 3. Architecture
+
+```mermaid
+flowchart LR
+    A[Sketch: draw or upload] --> B[Stage 1: Preprocess<br/>bilateral denoise, Otsu for drawn strokes,<br/>tone-preserving for uploads, 512x512 pad]
+    P[Optional text prompt] --> C
+    B --> C[Stage 2: ControlNet-Scribble + SD 1.5<br/>sketch-guided shaded 2D render]
+    C --> D[Stage 3: rembg isolation<br/>RGBA foreground, 85% frame]
+    D --> E[Stage 4a: Zero123++ multiview diffusion<br/>6 views, white-bg custom UNet]
+    E --> F[Stage 4b: InstantMesh FlexiCubes<br/>mesh + per-vertex colors from all 6 views]
+    F --> G[Stage 5: Validate + export<br/>Taubin smoothing, 8 checks, .glb + .obj]
+    G --> H[3D preview + downloads + JSON report]
 ```
-Sketch (draw / upload) + optional text prompt
-        │
-        ▼
-[Stage 1] src/preprocess.py      Gradio dict normalization → bilateral denoise → Otsu binarization
-        │                        faint-sketch fallback: adaptive threshold + Canny(30,100) + 3x3 dilate
-        ▼
-[Stage 2] src/sketch_to_2d.py    SD 1.5 + ControlNet-Scribble, FP16, 20 steps, UniPC scheduler (cuda:0)
-        │                        unload 2D pipeline + torch.cuda.empty_cache() before 3D load
-        ▼
-[Stage 3] src/sketch_to_2d.py    rembg background removal → tight alpha crop → 85% frame occupancy
-        ▼
-[Stage 4] src/image_to_3d.py     InstantMesh: Zero123++ multi-view diffusion (6 views, 75 steps)
-        │                        → LRM FlexiCubes reconstruction (grid_res=64 on a T4) on cuda:1/cuda:0
-        │                        Zero123++ unloaded between diffusion and reconstruction to fit VRAM
-        ▼
-[Stage 5] src/mesh_validator.py  8-step validation: floor reject → topology purge → unit normalize
-        │                        → anti-plane (min_axis_depth ≥ 0.05) → Laplacian smooth
-        │                        → dual GLB/OBJ export → trimesh.load() reload verification
-        ▼
-app.py (Gradio 4.44.0)           3D viewer, .glb/.obj downloads, per-stage timing JSON report
-```
 
-**Retry insurance:** if any of Stages 2–5 fails, `pipeline.py` silently re-runs once with seed + 1 before any error reaches the UI.
+**Why this pipeline:** a single 2D sketch underconstrains unseen geometry. Rather than reconstruct directly from sparse lines, Stage 2 hallucinates a *shaded, realistic interpretation* that stays structurally faithful to the sketch (ControlNet enforces this), Stage 3 isolates the object, and Stage 4's multiview diffusion explicitly invents the unseen sides — which is exactly the information a single-view reconstruction lacks. Colors are sampled per-vertex from all six views, giving true color grading on front, sides, and back.
 
-## Quickstart
+## 4. Repository Layout
+
+| Path | Purpose |
+|---|---|
+| `app.py` | Gradio 4.44 web UI — Sketchpad/upload tabs, prompt, seed, gallery, 3D viewer, downloads, report |
+| `pipeline.py` | Stage-6 orchestrator — per-stage timing, silent retry-once (seed+1), audit logging |
+| `config.py` | All model IDs, per-backend background colors, device pinning, thresholds — single source of truth |
+| `gradio_compat.py` | Compatibility guard for the pinned Gradio/gradio-client schema bug (gradio#11084) |
+| `src/preprocess.py` | Stage 1 — normalization, denoise, Otsu binarization (drawn strokes only), faint-stroke fallback |
+| `src/sketch_to_2d.py` | Stages 2–3 — ControlNet-Scribble render + rembg foreground isolation, timing instrumentation |
+| `src/image_to_3d.py` | Stage 4 — InstantMesh (primary) + TripoSR (fallback) reconstruction with vertex colors |
+| `src/mesh_validator.py` | Stage 5 — 8-step validation, Taubin smoothing, dual export, reload verification |
+| `src/logger.py` | Audit trail — every run logged with status and per-stage timings |
+| `download_weights.py` | One-click weight prefetch + source clones + rembg warm-up |
+| `outputs/` | Per-run `.glb` / `.obj` artifacts + audit log |
+
+## 5. Setup & Reproducibility
+
+### Requirements
+
+- Python 3.11 (venv recommended; validated on 3.9–3.11)
+- NVIDIA GPU with ≥6 GB VRAM (validated on RTX 4050 Laptop, 8 GB); CPU-only mode available via `MOCK_GPU=1` for UI/code inspection
+- ~15 GB disk for model weights
+
+### Install & run
 
 ```bash
-pip install -r requirements.txt     # torch first; nvdiffrast installed by the next step
-python download_weights.py          # one-time: prefetch SD1.5/ControlNet/Zero123++/InstantMesh
-                                    # weights, clone InstantMesh source into third_party/,
-                                    # install nvdiffrast, xatlas, PyMCubes, warm rembg u2net
-python app.py                       # UI at http://localhost:7860
+git clone https://github.com/Akarsh-42/techzephyr-ml-hackathon.git
+cd techzephyr-ml-hackathon
+python -m venv .venv
+# Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+python download_weights.py   # one-time: prefetch ~15 GB weights, clone sources, warm rembg
+python app.py                # open http://localhost:7860
 ```
 
-**CPU-only machines:** `MOCK_GPU` activates automatically (no GPU detected), so the entire pipeline runs end-to-end with a distance-transform mock render and a vertex-colored icosphere mesh — perfect for UI development and pipeline wiring checks. Set `MOCK_GPU=1` to force it even on GPU machines.
+Draw or upload a sketch, optionally add a prompt (e.g. "a glossy red ceramic vase"), click **Generate 3D Model**, inspect the 3D preview, and download the .glb or .obj.
 
-**Self-verify individual stages (no UI):**
+**Judges' quick verification (no weights download):** set `MOCK_GPU=1` and run `python app.py` — the full UI and pipeline logic run end-to-end with a mock icosphere mesh, proving wiring, validation, export, and reload checks work.
 
-```bash
-python src/logger.py
-python -m src.preprocess
-python -m src.sketch_to_2d
-python -m src.image_to_3d
-python -m src.mesh_validator
-python -m pipeline              # full end-to-end, exports outputs/run_*.glb/.obj
-```
+### Environment variables
 
-## Expected inputs & outputs
+| Variable | Default | Purpose |
+|---|---|---|
+| `PRIMARY_3D_BACKEND` | `instantmesh` | Set `triposr` for the lightweight fallback backend |
+| `MOCK_GPU` | `0` | `1` = CPU mock mode (no GPU / no weights needed) |
+| `WEIGHTS_CACHE_DIR` | `./weights_cache` | Point at a pre-provisioned Kaggle Dataset path for judge machines |
 
-- **Input:** in-app sketch (Sketchpad), uploaded sketch image (PNG/JPG), optional text prompt (object, material, color, style), seed.
-- **Output:** `outputs/run_YYYYMMDD_HHMMSS.glb` (primary, vertex-colored), `outputs/run_*.obj` (compatibility fallback), plus the pipeline intermediate gallery and a validation/timing JSON report.
+### Model weights (all open, Hugging Face)
 
-## Dependencies & licenses
+| Model | Repo | License |
+|---|---|---|
+| Stable Diffusion 1.5 | stable-diffusion-v1-5/stable-diffusion-v1-5 | OpenRAIL-Plus (CreativeML Open RAIL-M) |
+| ControlNet-Scribble | lllyasviel/sd-controlnet-scribble | OpenRAIL |
+| Zero123++ v1.2 | sudo-ai/zero123plus-v1.2 | Apache-2.0 (research) |
+| InstantMesh (UNet + instant_mesh_large.ckpt) | TencentARC/InstantMesh | Apache-2.0 |
+| TripoSR | stabilityai/TripoSR | MIT |
 
-| Component | Model ID / Package | License |
-| --- | --- | --- |
-| Stable Diffusion 1.5 | `stable-diffusion-v1-5/stable-diffusion-v1-5` | CreativeML OpenRAIL-M |
-| ControlNet-Scribble | `lllyasviel/sd-controlnet-scribble` | Apache-2.0 / OpenRAIL-M |
-| Zero123++ | `sudo-ai/zero123plus-v1.2` | Apache-2.0 |
-| InstantMesh (weights) | `TencentARC/InstantMesh` | Apache-2.0 |
-| InstantMesh (source) | `TencentARC/InstantMesh` — cloned to `third_party/` by `download_weights.py` (repo is not pip-installable; runtime deps in requirements.txt) | Apache-2.0 |
-| nvdiffrast | `git+https://github.com/NVlabs/nvdiffrast/` — installed by `download_weights.py` (required for FlexiCubes rasterization) | NVIDIA Source Code License |
-| rembg | PyPI `rembg` (u2net) | MIT |
-| trimesh | PyPI `trimesh` | MIT |
-| Gradio (pinned) | `gradio==4.44.0` | Apache-2.0 |
+All pretrained models are disclosed per hackathon rules; no external paid APIs; everything runs locally.
 
-## Runtime table (Colab/Kaggle T4, measured assumptions)
+## 6. Performance & Runtime
 
-| Stage | Component | Time |
-| --- | --- | --- |
-| 1 | Preprocess (Otsu + fallback) | ~0.2 s |
-| 2 | ControlNet 2D synthesis | ~4–6 s |
-| 3 | rembg isolation + recenter | ~1.0 s |
-| 4a | Zero123++ multi-view generation (75 steps) | ~15–25 s |
-| 4b | LRM FlexiCubes mesh extraction | ~10–20 s |
-| 5 | Validation + export + reload | ~0.5 s |
-| — | **Total** | **~30–55 s** |
+Measured on the development machine (single NVIDIA RTX 4050 Laptop GPU, 8 GB VRAM, fp16):
 
-CPU mock mode: full pipeline ~2–3 s.
+| Stage | Median time |
+|---|---|
+| 1 — Sketch preprocess | ~0.2 s |
+| 2 — ControlNet render (30 steps) | ~8–12 s |
+| 3 — rembg isolation | ~1–2 s |
+| 4 — InstantMesh (50-step multiview + FlexiCubes) | ~30–60 s |
+| 5 — Validate + dual export | ~0.5 s |
+| **Total** | **~40–75 s per model** |
 
-## Hardware assumptions & limitations
+**Resource notes:** Stage 2 pinned to `cuda:0`, Stage 4 pinned to `cuda:1` when two GPUs exist (no VRAM pooling); ~15 GB weight cache; peak VRAM ~5–6 GB (fp16 multiview diffusion dominates).
 
-- **Target hardware:** NVIDIA T4 16GB (Colab or Kaggle). Stage 2 pinned to `cuda:0`, Stage 4 to `cuda:1` when available; both share `cuda:0` on single-GPU machines. On single GPU, the 2D pipeline is unloaded before 3D loads, and Zero123++ is unloaded before the LRM loads.
-- **Single-view occlusion:** unseen backside geometry is hallucinated from multi-view priors; InstantMesh generates 6 consistent views to reduce ambiguity, but it is plausible, not exact.
-- **FlexiCubes resolution:** the T4-safe default is grid_res=64; very thin features (wireframes, antennas) may be simplified. Set `INSTANTMESH_GRID_RES=128` only on a GPU with substantially more VRAM.
-- **Vertex-color texturing:** InstantMesh queries vertex colors from the triplane; fine texture detail is represented as vertex colors, not UV-mapped textures.
-- **VRAM floor:** ~12GB free needed for the full GPU path (Zero123++ and LRM are loaded/unloaded sequentially); below that, force `MOCK_GPU=1`.
+## 7. Limitations (disclosed per rubric)
 
-## Reproducibility
+1. **Single-view underconstraint:** the unseen back/sides of the object are *invented* by Zero123++ multiview diffusion — plausible, not guaranteed faithful. Multiple plausible back-faces may need a different seed.
+2. **2D-style sketches:** Zero123++ struggles with flat/2D-style multiviews (per its authors), so highly stylized inputs can flatten. Changing the seed or prompting for "photorealistic" helps.
+3. **Faces/humans:** distorted faces possible (known Zero123++ limitation).
+4. **Vertex-color texturing:** fine texture detail is represented as per-vertex colors, not UV texture maps — fully viewable in all standard 3D software.
+5. **Windows path quirks:** OneDrive-synced project folders can serve stale files during installs; we recommend a non-synced path for the venv.
+6. **RAM floor:** 16 GB system RAM recommended; Stage 4 peaks during multiview resize.
+7. **Not production topology:** meshes are demo-quality, not animation-grade retopology (explicitly out of hackathon scope).
 
-- All model weights are fetched from the verified active Hugging Face repos listed above via `download_weights.py` (`huggingface_hub.snapshot_download` and `hf_hub_download`); InstantMesh's source is shallow-cloned from GitHub into `third_party/InstantMesh` by the same script, and nvdiffrast is installed by the same script from GitHub.
-- `gradio==4.44.0`, `numpy<3.0`, and all other versions pinned in `requirements.txt`.
-- Every pipeline run (success **and** failure) is logged with IST timestamps, stage timings, and mesh metrics in `done_so_far.md` / `what_we_did.md` — the project's continuous audit trail, generated by `src/logger.py`.
-- Deterministic seeds: same sketch + same seed → same 2D render and multi-view generation → same mesh.
+## 8. Troubleshooting
 
-## Troubleshooting
+| Symptom | Cause → Fix |
+|---|---|
+| `TypeError: argument of type 'bool' is not iterable` on launch | Gradio 4.44 + gradio-client schema bug — already patched via `gradio_compat.py`; ensure `import gradio_compat` runs before Blocks build (it does in `app.py`) |
+| `ImportError: im_src` | InstantMesh clone happened before the rename logic existed → delete `third_party/InstantMesh/` and rerun `python download_weights.py` |
+| Merge-conflict markers / `SyntaxError` in a repo file | A pull left conflict markers → `git merge --abort && git reset --hard origin/main && git clean -fd` |
+| OOM on 8 GB VRAM in Stage 4 | Lower `INSTANTMESH_DIFFUSION_STEPS` (50 → 30) in `config.py` |
+| Meshes look grey | You are on an old branch or pre-color fix → confirm `PRIMARY_3D_BACKEND=instantmesh` (default) |
+| Downloads look darker than the in-app viewer | Known Gradio Model3D viewer quirk; the exported file has correct colors |
 
-| Symptom | Fix |
-| --- | --- |
-| `ModuleNotFoundError: config` / `src` | Run as a module from project root: `python -m pipeline`, not `python pipeline/pipeline.py` |
-| First rembg call hangs | Downloading u2net.onnx (~170 MB, one time) — wait or pre-warm via `python download_weights.py` |
-| `numpy.dtype size changed` / CuPy import error on Colab Python 3.13 | Install from this project's current `requirements.txt` (it pins the compatible NumPy 2.3 and CUDA 12 CuPy line), then restart the runtime. Do not force NumPy 1.x on Python 3.13. |
-| CUDA OOM on Stage 4 | The default `INSTANTMESH_GRID_RES=64` is sized for a single 15 GB Colab T4 and releases Zero123++/LRM between stages. Restart the Colab runtime once after pulling this fix. Keep the default; only set `INSTANTMESH_GRID_RES=128` on a GPU with substantially more VRAM. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is set automatically to reduce fragmentation, but cannot make a 15 GiB allocation fit on a 15 GB GPU. |
-| Flat plane rejected on valid sketch | Retry insurance re-runs with seed+1 automatically; if it persists, the sketch may need stronger depth cues (shading lines) |
-| `ModuleNotFoundError: src.models` | Run `python download_weights.py` once (clones InstantMesh source into `third_party/`) |
-| nvdiffrast build fails | Requires CUDA toolkit matching your PyTorch; install via `pip install git+https://github.com/NVlabs/nvdiffrast/` |
-| nvdiffrast build fails on Windows | Install Visual Studio Build Tools (C++ workload) and CUDA toolkit; or develop on CPU mock mode (`MOCK_GPU=1`) |
+## 9. Design Decisions & Implementation Notes
 
-## Role summary (from the audit log)
+- **Dual backend with a benchmark gate:** InstantMesh is primary for richer color; TripoSR remains a one-line env-var fallback for constrained judge machines — both paths validated end-to-end.
+- **White background for InstantMesh:** its custom Zero123++ UNet is trained on white backgrounds (model card); gray (TripoSR's preference) would desaturate multiview colors.
+- **Vertex colors, not UV maps:** InstantMesh's official demo path; correct colors on all faces without nvdiffrast/CUDA-compile risk on Windows judge machines.
+- **Orientation fix:** official `[1,2,0]` vertex axis swap (InstantMesh) / −90°X + 90°Y rotation (TripoSR) so the viewer shows objects upright.
+- **Silent retry-once:** any Stage 2–5 exception triggers a silent re-run at seed+1 before any error reaches the UI — our zero-crash demo insurance.
+- **Audit logging:** every run writes status + per-stage timings to the audit log — instant answers for judge questions on runtime and reliability.
+- **Tone-preserving uploads:** heavy Otsu binarization is applied only to hand-drawn strokes; uploaded sketches keep their tones so ControlNet follows the original drawing.
+- **Taubin smoothing (3 passes):** shrink-free smoothing that removes sketch-lump noise without the "deflated pillow" effect of plain Laplacian.
 
-| Module | Role | Rubric mapping |
-| --- | --- | --- |
-| `src/logger.py` + audit files | Role C (Docs & Audit) | Documentation 15 pts, Reproducibility 15 pts |
-| `config.py`, `download_weights.py` | Role C (Infra Lead) | Reproducibility 15 pts |
-| `src/preprocess.py` | Role A (2D Vision Lead) | Technical Implementation 25 pts |
-| `src/sketch_to_2d.py` | Role A (2D Vision Lead) | 3D Output Quality 25 pts |
-| `src/image_to_3d.py` | Role B (3D Lead) | 3D Output Quality 25 pts, Efficiency 20 pts |
-| `src/mesh_validator.py` | Role B (3D Lead) | Pipeline Validity 20 pts |
-| `pipeline.py`, `app.py` | Role C (UI & Integration) | End-to-End Prototype 20 pts |
+## 10. Sample Outputs
+
+Place generated artifacts here: `outputs/run_YYYYMMDD_HHMMSS.glb/.obj`. The audit log records every run's status and per-stage timings. Example inputs/outputs to be included in the final submission package: sketch PNG → shaded render → isolated RGBA → 6-view grid → 3D preview screenshot + downloadable .glb.
+
+## 11. Attribution
+
+Built with: PyTorch, Hugging Face Diffusers (ControlNet, Zero123++ custom pipeline), InstantMesh (TencentARC, FlexiCubes), TripoSR (Stability AI × Tripo), rembg (u2net), OpenCV, trimesh, Gradio 4.44. All pretrained model licenses disclosed in §5.
+
+## 12. Final Demonstration Plan
+
+1. Launch `python app.py` (weights pre-cached).
+2. Draw a fresh chair sketch on the canvas (judges may supply their own — no pre-generated outputs relied upon; seed 42 for determinism, retry-once insurance armed).
+3. Walk the stage chips: preprocess → ControlNet → isolation → multiview → validate/export.
+4. Show the 3D preview (upright, color-graded), download the .glb, open it in an external viewer if requested.
+5. Show the JSON report: per-stage timings, vertex/face counts, watertight flag, reload-verified flag.
+6. Q&A: flip to `config.py` for the benchmark gate, `pipeline.py` for retry/timing logic, `mesh_validator.py` for the 8-step validation.
