@@ -14,23 +14,40 @@ SD_MODEL_ID = "stable-diffusion-v1-5/stable-diffusion-v1-5"
 CONTROLNET_MODEL_ID = "lllyasviel/sd-controlnet-scribble"
 TRIPOSR_MODEL_ID = "stabilityai/TripoSR"
 INSTANTMESH_MODEL_ID = "TencentARC/InstantMesh"
+ZERO123PLUS_MODEL_ID = "sudo-ai/zero123plus-v1.2"
 
 # --- Per-backend background compositing (CRITICAL, Stage 4) ----------------
 # TripoSR: the official demo (gradio_app.py, fill_background) composites the
 # RGBA foreground onto 0.5 GRAY — not white. On pure white the SDF field keeps
 # a faint surface shell at the background plane, which surfaces as a thin
-# background slab glued behind the object in the extracted mesh. Gray matches
-# TripoSR's training distribution and eliminates the shell.
+# background slab glued behind the object in the extracted mesh.
 BG_COLOR_TRIPOSR = (127, 127, 127)      # neutral GRAY for TripoSR (official demo)
-BG_COLOR_INSTANTMESH = (127, 127, 127)  # neutral GRAY for InstantMesh
+# InstantMesh: its CUSTOMIZED Zero123++ UNet was trained to generate
+# WHITE-background multiviews (model card: "customized Zero123++ UNet for
+# white-background image generation"), and the official Space feeds the
+# foreground composited on white. Gray would fight the UNet's training
+# distribution and desaturate the multiview colors.
+BG_COLOR_INSTANTMESH = (255, 255, 255)  # WHITE for InstantMesh (official demo)
 
 # --- TripoSR marching-cubes threshold ---------------------------------------
 # extract_mesh(threshold=...) carves away low-density background fog around the
 # object. 25.0 is the official default; raise if background shells persist.
 TRIPOSR_MC_THRESHOLD = 25.0
 
-# --- 3D backend selection (Hour 5-8 benchmark gate decides) -----------------
-PRIMARY_3D_BACKEND = os.getenv("PRIMARY_3D_BACKEND", "triposr")  # "triposr" | "instantmesh"
+# --- InstantMesh weights (single files inside TencentARC/InstantMesh) --------
+INSTANTMESH_UNET_FILE = "diffusion_pytorch_model.bin"   # custom white-bg Zero123++ UNet
+INSTANTMESH_CKPT_FILE = "instant_mesh_large.ckpt"       # FlexiCubes reconstruction model
+INSTANTMESH_CONFIG_NAME = "instant-mesh-large"           # configs/<name>.yaml in the clone
+
+# Zero123++ diffusion sampling steps. Official demo default is 75 (slider
+# 30-75); 50 keeps multiview quality high while trimming ~1/3 of stage-4 time.
+INSTANTMESH_DIFFUSION_STEPS = 50
+
+# --- 3D backend selection ----------------------------------------------------
+# "instantmesh" is the primary (better geometry + richer vertex colors from 6
+# multiview renders); "triposr" stays as the fallback via env override:
+#   PRIMARY_3D_BACKEND=triposr python app.py
+PRIMARY_3D_BACKEND = os.getenv("PRIMARY_3D_BACKEND", "instantmesh")
 
 # --- Device pinning (Kaggle T4 x2 does NOT pool VRAM) -----------------------
 DEVICE_2D = "cuda:0" if torch.cuda.is_available() else "cpu"
