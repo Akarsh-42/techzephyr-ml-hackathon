@@ -1,4 +1,4 @@
-"""Stage 4 — Per-backend BG compositing + TripoSR 3D reconstruction (cuda:1 / cuda:0)."""
+"""Stage 4 — 3D reconstruction: InstantMesh (primary) / TripoSR (fallback)."""
 from __future__ import annotations
 
 import sys
@@ -17,7 +17,17 @@ _TRIPOSR_SRC = Path(__file__).resolve().parent.parent / "third_party" / "TripoSR
 if _TRIPOSR_SRC.is_dir() and str(_TRIPOSR_SRC) not in sys.path:
     sys.path.insert(0, str(_TRIPOSR_SRC))
 
+# InstantMesh's repo (third_party/InstantMesh, cloned by download_weights.py)
+# also ships a top-level src/ package which would collide with OUR src/ on
+# sys.path — the downloader renames it to im_src and exposes the util modules
+# we need (im_src.utils.camera_util, im_src.utils.train_util).
+_INSTANTMESH_SRC = Path(__file__).resolve().parent.parent / "third_party" / "InstantMesh"
+if _INSTANTMESH_SRC.is_dir() and str(_INSTANTMESH_SRC) not in sys.path:
+    sys.path.insert(0, str(_INSTANTMESH_SRC))
+
 _triposr_model = None
+_instantmesh_pipe = None
+_instantmesh_recon = None
 
 
 def composite_for_backend(rgba_img: Image.Image, backend: str) -> Image.Image:
@@ -27,14 +37,122 @@ def composite_for_backend(rgba_img: Image.Image, backend: str) -> Image.Image:
     return Image.alpha_composite(canvas, rgba).convert("RGB")
 
 
+# ---------------------------------------------------------------------------
+# InstantMesh backend (primary)
+# ---------------------------------------------------------------------------
+def _load_instantmesh():
+    """Load Zero123++ diffusion pipeline + FlexiCubes reconstruction model.
+
+    Mirrors the official Space app.py: DiffusionPipeline.from_pretrained(
+    "sudo-ai/zero123plus-v1.2", custom_pipeline="zero123plus") with the custom
+    white-background UNet from TencentARC/InstantMesh, plus instant_mesh_large
+    .ckpt loaded via instantiate_from_config. Cached as lazy singletons.
+    """
+    global _instantmesh_pipe, _instantmesh_recon
+    from diffusers import DiffusionPipeline, EulerAncestralDiscreteScheduler
+    from huggingface_hub import hf_hub_download
+    from omegaconf import OmegaConf
+
+    if _instantmesh_pipe is None:
+        unet_path = hf_hub_download(
+            repo_id=config.INSTANTMESH_MODEL_ID,
+            filename=config.INSTANTMESH_UNET_FILE,
+            cache_dir=config.WEIGHTS_CACHE_DIR,
+        )
+        _instantmesh_pipe = DiffusionPipeline.from_pretrained(
+            config.ZERO123PLUS_MODEL_ID,
+            custom_pipeline="zero123plus",
+            torch_dtype=torch.float16,
+            cache_dir=config.WEIGHTS_CACHE_DIR,
+        )
+        _instantmesh_pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(
+            _instantmesh_pipe.scheduler.config, timestep_spacing="trailing"
+        )
+        state_dict = torch.load(unet_path, map_location="cpu")
+        _instantmesh_pipe.unet.load_state_dict(state_dict, strict=True)
+        _instantmesh_pipe = _instantmesh_pipe.to(config.DEVICE_3D)
+
+    if _instantmesh_recon is None:
+        from im_src.utils.train_util import instantiate_from_config
+
+        ckpt_path = hf_hub_download(
+            repo_id=config.INSTANTMESH_MODEL_ID,
+            filename=config.INSTANTMESH_CKPT_FILE,
+            cache_dir=config.WEIGHTS_CACHE_DIR,
+        )
+        cfg_path = _INSTANTMESH_SRC / "configs" / f"{config.INSTANTMESH_CONFIG_NAME}.yaml"
+        cfg = OmegaConf.load(cfg_path)
+        model = instantiate_from_config(cfg.model_config)
+        state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
+        state_dict = {
+            k[14:]: v
+            for k, v in state_dict.items()
+            if k.startswith("lrm_generator.") and "source_camera" not in k
+        }
+        model.load_state_dict(state_dict, strict=True)
+        model = model.to(config.DEVICE_3D).eval()
+        model.init_flexicubes_geometry(torch.device(config.DEVICE_3D), use_renderer=False)
+        _instantmesh_recon = model
+
+    return _instantmesh_pipe, _instantmesh_recon
+
+
+def _generate_multiview(pipe, composite: Image.Image, seed: int) -> Image.Image:
+    """Run Zero123++ to synthesize the 6-view image grid (960x640)."""
+    from pytorch_lightning import seed_everything
+
+    seed_everything(seed)
+    return pipe(composite, num_inference_steps=config.INSTANTMESH_DIFFUSION_STEPS).images[0]
+
+
+def _extract_instantmesh_mesh(recon, z123_image: Image.Image) -> trimesh.Trimesh:
+    """FlexiCubes extraction with 6-view vertex colors (official make3d flow)."""
+    from einops import rearrange
+    from torchvision.transforms import v2
+
+    from im_src.utils.camera_util import get_zero123plus_input_cameras
+
+    images = np.asarray(z123_image, dtype=np.float32) / 255.0
+    images = torch.from_numpy(images).permute(2, 0, 1).contiguous().float()
+    images = rearrange(images, "c (n h) (m w) -> (n m) c h w", n=3, m=2)
+
+    device = torch.device(config.DEVICE_3D)
+    input_cameras = get_zero123plus_input_cameras(batch_size=1, radius=4.0).to(device)
+
+    images = images.unsqueeze(0).to(device)
+    images = v2.functional.resize(images, (320, 320), interpolation=3, antialias=True).clamp(0, 1)
+
+    with torch.no_grad():
+        planes = recon.forward_planes(images, input_cameras)
+        mesh_out = recon.extract_mesh(planes, use_texture_map=False)
+    vertices, faces, vertex_colors = mesh_out
+
+    # Official demo axis swap: InstantMesh vertex space -> glTF/gradio frame.
+    vertices = vertices[:, [1, 2, 0]]
+
+    return trimesh.Trimesh(
+        vertices=vertices.cpu().numpy(),
+        faces=faces.cpu().numpy(),
+        vertex_colors=(vertex_colors.cpu().numpy() * 255).astype(np.uint8),
+    )
+
+
+def _reconstruct_instantmesh(rgba_img: Image.Image, seed: int) -> trimesh.Trimesh:
+    pipe, recon = _load_instantmesh()
+    composite = composite_for_backend(rgba_img, "instantmesh")
+    z123_image = _generate_multiview(pipe, composite, seed)
+    return _extract_instantmesh_mesh(recon, z123_image)
+
+
+# ---------------------------------------------------------------------------
+# TripoSR backend (fallback)
+# ---------------------------------------------------------------------------
 def to_gradio_3d_orientation(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     """TripoSR's official viewer-orientation transform (tsr/utils.py).
 
     TSR meshes come out y-up in TSR's internal camera convention; the Gradio
     Model3D viewer (and most glTF consumers) expect a different frame. The
-    official demo applies exactly these two rotations after extract_mesh —
-    skipping it is why objects appeared rotated 90 degrees in the viewer while
-    the vertex colors (baked per-vertex, riding the geometry) looked "straight".
+    official demo applies exactly these two rotations after extract_mesh.
     """
     mesh.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))
     mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
@@ -77,15 +195,7 @@ def _mock_mesh() -> trimesh.Trimesh:
 
 
 def _has_vertex_colors(mesh: trimesh.Trimesh) -> bool:
-    """True if the mesh carries a per-vertex color for every vertex.
-
-    TripoSR's textured extraction (extract_mesh(has_vertex_color=True)) bakes
-    VERTEX COLORS from the triplane — it does NOT produce a UV/texture map, so
-    checking mesh.visual.uv (as an earlier version did) wrongly rejected the
-    native colors every time. An even later edit called extract_mesh(
-    has_vertex_color=False) directly and never baked colors at all, which is
-    why meshes came out completely grey.
-    """
+    """True if the mesh carries a per-vertex color for every vertex."""
     try:
         vc = mesh.visual.vertex_colors
         return vc is not None and len(vc) == len(mesh.vertices)
@@ -109,14 +219,7 @@ def _extract_mesh_with_texture(
     isolated_rgba: Image.Image,
     mc_resolution: int,
 ) -> trimesh.Trimesh:
-    """Extract the mesh with TripoSR's native per-vertex colors.
-
-    has_vertex_color=True makes TSR sample colors from the triplane itself, so
-    side/back-facing vertices get correct object colors (not background gray).
-    Only if that path truly fails do we fall back to bbox baking from the
-    WHITE-composited isolated foreground (never the gray Stage-4 composite,
-    which would paint the object's silhouette gray).
-    """
+    """TripoSR native per-vertex colors; bbox baking as last resort."""
     try:
         mesh = model.extract_mesh(
             scene_codes,
@@ -140,21 +243,8 @@ def _extract_mesh_with_texture(
         return mesh
 
 
-def reconstruct_3d_mesh(
-    rgba_img: Image.Image,
-    backend: str = config.PRIMARY_3D_BACKEND,
-    mc_resolution: int = 256,
-    seed: int = 42,
-) -> trimesh.Trimesh:
-    if config.MOCK_GPU:
-        return _mock_mesh()
-
-    if backend == "instantmesh":
-        raise ValueError(
-            "InstantMesh backend is not wired yet (pending Hour 5-8 benchmark gate); use 'triposr'."
-        )
-
-    composite = composite_for_backend(rgba_img, backend)
+def _reconstruct_triposr(rgba_img: Image.Image, mc_resolution: int) -> trimesh.Trimesh:
+    composite = composite_for_backend(rgba_img, "triposr")
     model = _load_triposr()
     device = torch.device(config.DEVICE_3D)
     with torch.no_grad():
@@ -167,9 +257,26 @@ def reconstruct_3d_mesh(
     return mesh
 
 
-if __name__ == "__main__":
-    from src.logger import log_feature_progress
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+def reconstruct_3d_mesh(
+    rgba_img: Image.Image,
+    backend: str = config.PRIMARY_3D_BACKEND,
+    mc_resolution: int = 256,
+    seed: int = 42,
+) -> trimesh.Trimesh:
+    if config.MOCK_GPU:
+        return _mock_mesh()
 
+    if backend == "instantmesh":
+        return _reconstruct_instantmesh(rgba_img, seed)
+    if backend == "triposr":
+        return _reconstruct_triposr(rgba_img, mc_resolution)
+    raise ValueError(f"Unknown 3D backend: {backend!r} (use 'instantmesh' or 'triposr').")
+
+
+if __name__ == "__main__":
     rgba = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
     from PIL import ImageDraw
 
@@ -178,37 +285,10 @@ if __name__ == "__main__":
     triposr_bg = composite_for_backend(rgba, "triposr")
     instant_bg = composite_for_backend(rgba, "instantmesh")
     assert np.asarray(triposr_bg)[0, 0].tolist() == [127, 127, 127]
-    assert np.asarray(instant_bg)[0, 0].tolist() == [127, 127, 127]
+    assert np.asarray(instant_bg)[0, 0].tolist() == [255, 255, 255]
 
     mesh = reconstruct_3d_mesh(rgba)
     assert len(mesh.vertices) >= config.MIN_VERTICES
     assert len(mesh.faces) >= config.MIN_FACES
     assert mesh.visual is not None
-
-    log_feature_progress(
-        feature_name="Step 4 — 3D Reconstruction & Per-Backend Compositing",
-        role_owner="Role B (3D Lead)",
-        role_importance_and_job=(
-            "Core engine for 3D Output Quality (25 pts) & Efficiency (20 pts): routes "
-            "per-backend BG colors and extracts the 3D mesh on the pinned DEVICE_3D "
-            "with native per-vertex colors, oriented for the Gradio viewer."
-        ),
-        files_modified=["src/image_to_3d.py", "config.py"],
-        technical_explanation=(
-            "composite_for_backend reads BG colors exclusively from config (0.5 GRAY, "
-            "matching the official TripoSR demo's fill_background — pure white left a "
-            "faint SDF shell behind the object). TripoSR path: TSR lazy singleton from "
-            "the snapshot_download cache, chunked rendering (8192) to bound VRAM. "
-            "_extract_mesh_with_texture keeps TSR's native vertex colors (has_vertex_color="
-            "True, threshold=TRIPOSR_MC_THRESHOLD); acceptance is verified via "
-            "_has_vertex_colors (per-vertex colors), NOT a UV map, which TSR never "
-            "produces. A previous edit called extract_mesh(has_vertex_color=False) "
-            "directly with no baking step, producing fully grey meshes — restored here. "
-            "Fallback bakes from the WHITE-composited isolated RGBA so silhouettes never "
-            "absorb the gray background. After extraction, to_gradio_3d_orientation "
-            "applies the official -90deg X / +90deg Y rotations. mc_resolution is "
-            "caller-tunable (UI slider 128-512). MOCK_GPU returns an icosphere."
-        ),
-        duration_or_latency="TripoSR ~5-15s on T4 (textured path slightly higher)",
-    )
     print(f"Step 4 verified: mesh with {len(mesh.vertices)} verts / {len(mesh.faces)} faces.")
