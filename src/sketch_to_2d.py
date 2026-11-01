@@ -13,9 +13,23 @@ from rembg import remove
 import config
 
 DEFAULT_PROMPT = (
-    "high quality, detailed, professional 3D render, studio lighting, "
-    "clean solid background, centered object"
+    "high quality, detailed, fully colored professional 3D product render, "
+    "plausible material-specific colors, studio lighting, clean solid background, "
+    "centered object"
 )
+COLOR_MAPPING_GUIDANCE = (
+    "Render in full color. Treat explicit user color assignments as authoritative " +
+    "and do not change them. Apply each requested color to its named part. "
+    "Infer plausible, distinct colors for unassigned parts; preserve the sketch shape. "
+    "Avoid grayscale unless explicitly requested."
+)
+
+
+def _build_generation_prompt(user_prompt: str = "") -> str:
+    user_prompt = (user_prompt or "").strip()
+    if user_prompt:
+        return f"{user_prompt}. {COLOR_MAPPING_GUIDANCE} {DEFAULT_PROMPT}"
+    return f"{DEFAULT_PROMPT}, infer a plausible full-color palette from the sketch and object materials"
 
 LAST_TIMINGS = {"controlnet_s": 0.0, "rembg_s": 0.0}
 
@@ -86,8 +100,7 @@ def generate_2d_and_isolate_foreground(
     control_scale: float = 0.85,
     seed: int = 42,
 ) -> tuple[Image.Image, Image.Image]:
-    user_prompt = (user_prompt or "").strip()
-    prompt = f"{user_prompt}, {DEFAULT_PROMPT}" if user_prompt else DEFAULT_PROMPT
+    prompt = _build_generation_prompt(user_prompt)
 
     t = time.perf_counter()
     if config.MOCK_GPU:

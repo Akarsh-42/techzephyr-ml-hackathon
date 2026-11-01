@@ -33,7 +33,10 @@ with gr.Blocks(title="Sketch2Shape AI") as demo:
                     sketchpad = gr.Sketchpad(label="Sketch here")
                 with gr.Tab("Upload"):
                     upload = gr.Image(type="pil", label="Upload a sketch image")
-            prompt = gr.Textbox(label="Optional prompt (object, material, color, style)")
+            prompt = gr.Textbox(
+                label="Object, material & color instructions",
+                placeholder="e.g. a chair with a red seat, blue backrest, and black metal legs",
+            )
             seed = gr.Number(value=42, label="Seed", precision=0)
             generate_btn = gr.Button("Generate 3D Model", variant="primary")
         with gr.Column():
