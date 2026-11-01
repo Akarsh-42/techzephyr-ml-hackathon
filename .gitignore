@@ -16,6 +16,8 @@ weights_cache/
 # Generated outputs
 output/
 outputs/
+done_so_far.md
+what_we_did.md
 
 # Python caches
 __pycache__/
