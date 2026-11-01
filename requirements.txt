@@ -10,7 +10,11 @@ huggingface_hub>=0.23.0,<1.0
 safetensors>=0.4.0
 rembg>=2.0.50
 onnxruntime>=1.16.0
-numpy>=1.24.0,<2.0
+# Current Colab uses Python 3.13, which requires NumPy >=2.1.  Keep CuPy on
+# the matching NumPy-2/CUDA-12 wheel line; PyMatting (used by rembg) imports it
+# during foreground estimation.
+numpy>=2.3.0,<2.4.0
+cupy-cuda12x>=14.0.0,<15.0.0
 opencv-python-headless>=4.8.0
 Pillow>=10.0.0
 trimesh>=4.0.0
