@@ -10,6 +10,9 @@ import gradio_compat  # noqa: F401
 from pipeline import run_pipeline
 
 
+APP_CSS = '@import url(\'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap\');\n\n:root, .dark {\n    --color-accent: #22C55E;\n    --primary-500: #22C55E;\n    --primary-600: #16A34A;\n    --body-background-fill: #0B1220;\n    --background-fill-primary: #111827;\n    --background-fill-secondary: #0F172A;\n    --border-color-primary: #263246;\n}\nbody, button, input, textarea, select, .gradio-container {\n    font-family: "Inter", ui-sans-serif, system-ui, sans-serif !important;\n}\n.gradio-container {\n    max-width: none !important;\n    min-height: 100vh;\n    color: #E5E7EB !important;\n    background: radial-gradient(ellipse at 15% 0%, rgba(34, 197, 94, .10), transparent 36%), #0B1220 !important;\n}\n#studio-header {\n    max-width: 1440px;\n    margin: 0 auto 1.25rem auto;\n    padding: 1.4rem 1.5rem 1rem;\n    border-bottom: 1px solid #263246;\n}\n#studio-header h1, #studio-header * {\n    font-family: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif !important;\n}\n#studio-header h1 {\n    color: #F8FAFC;\n    font-size: clamp(1.8rem, 3vw, 2.65rem);\n    letter-spacing: -.04em;\n    margin: .15rem 0;\n}\n#studio-header p {\n    color: #94A3B8;\n    font-family: "Inter", ui-sans-serif, system-ui, sans-serif !important;\n    margin: .25rem 0 0;\n}\n#studio-layout {\n    max-width: 1440px;\n    margin: 0 auto !important;\n    gap: 1.1rem !important;\n    align-items: stretch;\n}\n#input-panel, #output-panel {\n    background: rgba(17, 24, 39, .94) !important;\n    border: 1px solid #263246 !important;\n    border-radius: 20px !important;\n    padding: 1.25rem !important;\n    box-shadow: 0 18px 50px rgba(0, 0, 0, .22);\n}\n#input-panel h3, #output-panel h3 {\n    color: #F8FAFC;\n    font-family: "Space Grotesk", "Inter", sans-serif !important;\n}\n#input-panel label, #output-panel label { color: #CBD5E1 !important; }\n#input-panel .tab-nav button.selected {\n    color: #86EFAC !important;\n    border-color: #22C55E !important;\n}\n#sketchpad {\n    width: 100% !important;\n    background: #fff !important;\n    border: 1px solid #CBD5E1 !important;\n    border-radius: 14px !important;\n    overflow: hidden !important;\n}\n#sketchpad .image-editor,\n#sketchpad .image-container,\n#sketchpad .canvas-container { background: #fff !important; }\n#sketchpad canvas {\n    background: transparent !important;\n    touch-action: none;\n}\n#input-panel input, #input-panel textarea {\n    background: #0B1220 !important;\n    color: #F8FAFC !important;\n    border-color: #334155 !important;\n}\n#input-panel input::placeholder, #input-panel textarea::placeholder { color: #94A3B8 !important; }\n#generate-btn {\n    background: #15803D !important;\n    border-color: #15803D !important;\n    color: #fff !important;\n    font-weight: 700 !important;\n    min-height: 3.25rem;\n}\n#generate-btn:hover { background: #166534 !important; border-color: #166534 !important; }\ninput[type="range"] { accent-color: #22C55E !important; }\n#camera-controls {\n    background: #0B1220 !important;\n    border: 1px solid #263246;\n    border-radius: 14px;\n    padding: .65rem;\n}\n#camera-controls label { color: #CBD5E1 !important; }\n#downloads { gap: .75rem; }\n#model-viewer, #pipeline-gallery { border-radius: 14px !important; }\n@media (max-width: 900px) {\n    #studio-layout { flex-direction: column !important; gap: .85rem !important; }\n    #input-panel, #output-panel { padding: 1rem !important; }\n}\n@media (max-width: 600px) {\n    #camera-controls { flex-direction: column !important; }\n    #studio-header { padding: 1rem .5rem; }\n}\n'
+
+
 def generate(sketch, upload, prompt, seed):
     try:
         result = run_pipeline(sketch, upload, prompt or "", int(seed))
@@ -24,28 +27,93 @@ def generate(sketch, upload, prompt, seed):
     return gallery, result["glb_path"], result["glb_path"], result["obj_path"], result["report"]
 
 
-with gr.Blocks(title="Sketch2Shape AI") as demo:
-    gr.Markdown("# Sketch2Shape AI — draw a sketch, get a 3D model (.glb / .obj)")
-    with gr.Row():
-        with gr.Column():
+def update_viewer_camera(model_path, zoom, orbit, tilt):
+    """Update only the Gradio viewer camera; never re-run model generation."""
+    if not model_path:
+        return gr.update()
+    radius = 3.0 / max(float(zoom or 1.0), 0.5)
+    return gr.update(
+        value=model_path,
+        camera_position=(float(orbit or 0), float(tilt or 75), radius),
+    )
+
+
+with gr.Blocks(
+    title="Sketch2Shape Studio",
+    css=APP_CSS,
+    theme=gr.themes.Soft(primary_hue="green", neutral_hue="slate"),
+) as demo:
+    gr.Markdown(
+        "# Sketch2Shape Studio\n### A sketch in. A colored 3D model out.",
+        elem_id="studio-header",
+    )
+    with gr.Row(elem_id="studio-layout"):
+        with gr.Column(scale=5, min_width=360, elem_id="input-panel"):
+            gr.Markdown("### 01 · Create your sketch")
+            gr.Markdown("Draw on the white canvas or switch to upload. Add part-specific color notes below.")
             with gr.Tabs():
                 with gr.Tab("Draw"):
-                    sketchpad = gr.Sketchpad(label="Sketch here")
+                    sketchpad = gr.Sketchpad(
+                        label="Sketch canvas",
+                        elem_id="sketchpad",
+                        canvas_size=(640, 480),
+                        width="100%",
+                        height=550,
+                    )
                 with gr.Tab("Upload"):
-                    upload = gr.Image(type="pil", label="Upload a sketch image")
+                    upload = gr.Image(type="pil", label="Upload a sketch image", height=550)
             prompt = gr.Textbox(
-                label="Object, material & color instructions",
+                label="Object and color notes",
                 placeholder="e.g. a chair with a red seat, blue backrest, and black metal legs",
+                lines=2,
             )
             seed = gr.Number(value=42, label="Seed", precision=0)
-            generate_btn = gr.Button("Generate 3D Model", variant="primary")
-        with gr.Column():
-            gallery = gr.Gallery(label="Pipeline intermediates", columns=3, height=240)
-            viewer = gr.Model3D(label="3D preview")
-            with gr.Row():
+            generate_btn = gr.Button(
+                "Generate 3D model",
+                variant="primary",
+                elem_id="generate-btn",
+            )
+        with gr.Column(scale=7, min_width=420, elem_id="output-panel"):
+            gr.Markdown("### 02 · Inspect your model")
+            gallery = gr.Gallery(
+                label="Pipeline",
+                columns=3,
+                height=200,
+                elem_id="pipeline-gallery",
+            )
+            viewer = gr.Model3D(
+                label="Interactive 3D preview",
+                elem_id="model-viewer",
+                height=430,
+                camera_position=(0, 75, 3.0),
+            )
+            gr.Markdown("#### Camera controls")
+            with gr.Row(elem_id="camera-controls"):
+                zoom_slider = gr.Slider(
+                    minimum=0.5, maximum=2.0, value=1.0, step=0.05,
+                    label="Zoom",
+                )
+                orbit_slider = gr.Slider(
+                    minimum=0, maximum=360, value=0, step=1,
+                    label="Orbit",
+                )
+                tilt_slider = gr.Slider(
+                    minimum=15, maximum=165, value=75, step=1,
+                    label="Tilt",
+                )
+            with gr.Row(elem_id="downloads"):
                 glb_out = gr.File(label="Download .glb")
                 obj_out = gr.File(label="Download .obj")
-            report = gr.JSON(label="Validation & timing report")
+            with gr.Accordion("Validation and timing report", open=False):
+                report = gr.JSON(show_label=False)
+
+    for camera_control in (zoom_slider, orbit_slider, tilt_slider):
+        camera_control.release(
+            update_viewer_camera,
+            inputs=[viewer, zoom_slider, orbit_slider, tilt_slider],
+            outputs=[viewer],
+            queue=False,
+        )
 
     generate_btn.click(
         generate,
