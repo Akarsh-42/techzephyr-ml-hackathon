@@ -33,6 +33,8 @@ Turn a rough, single-view 2D sketch — drawn in-app or uploaded — into a **re
 | Mesh validation (8-step, anti-plane, watertight check) | ✅ |
 | Deterministic reruns via seed + retry-once insurance | ✅ |
 | Fallback 3D backend (TripoSR) via env var | ✅ |
+** TripoSR was used initially for creating logic and launching a basic working structure. then we shifted to instantmesh which is much more capable of working on advanced problems for 3d image generation.
+
 ## 3. Architecture
 
 ```mermaid
