@@ -32,7 +32,7 @@ Turn a rough, single-view 2D sketch — drawn in-app or uploaded — into a **re
 | Dual export: .glb + .obj, reload-verified | ✅ |
 | Mesh validation (8-step, anti-plane, watertight check) | ✅ |
 | Deterministic reruns via seed + retry-once insurance | ✅ |
-
+| Fallback 3D backend (TripoSR) via env var | ✅ |
 ## 3. Architecture
 
 ```mermaid
@@ -72,6 +72,7 @@ flowchart LR
 - Python 3.11 (venv recommended; validated on 3.9–3.11)
 - NVIDIA GPU with ≥6 GB VRAM (validated on RTX 4050 Laptop, 8 GB); CPU-only mode available via `MOCK_GPU=1` for UI/code inspection
 - ~15 GB disk for model weights
+- preferable if ran on google colab with runtime connection of T4 GPU 
 
 ### Install & run
 
@@ -111,7 +112,7 @@ All pretrained models are disclosed per hackathon rules; no external paid APIs; 
 
 ## 6. Performance & Runtime
 
-Measured on the development machine (single NVIDIA RTX 4050 Laptop GPU, 8 GB VRAM, fp16):
+Measured on the development machine(single NVIDIA RTX 4050 Laptop GPU, 8 GB VRAM, fp16)::
 
 | Stage | Median time |
 |---|---|
@@ -124,6 +125,19 @@ Measured on the development machine (single NVIDIA RTX 4050 Laptop GPU, 8 GB VRA
 
 **Resource notes:** Stage 2 pinned to `cuda:0`, Stage 4 pinned to `cuda:1` when two GPUs exist (no VRAM pooling); ~15 GB weight cache; peak VRAM ~5–6 GB (fp16 multiview diffusion dominates).
 
+**Measured on Google Colab using a single NVIDIA Tesla T4 GPU (16 GB VRAM, fp16):
+
+| Stage | Median time |
+|---|---:|
+| 1 — Sketch preprocess | ~0.3–0.8 s |
+| 2 — ControlNet render (30 steps) | ~20–45 s |
+| 3 — `rembg` isolation | ~2–6 s |
+| 4 — InstantMesh (50-step multiview + FlexiCubes) | ~105–245 s |
+| 5 — Validate + dual export | ~0.5–1 s |
+| **Total** | **~130–300 s per model** |
+
+**Resource notes:** The Google Colab T4 uses one 16 GB GPU, so stages run sequentially rather than being pinned to separate GPUs. Models are loaded or offloaded between stages to stay within VRAM limits. Peak VRAM usage is approximately 12–15 GB, with multiview diffusion and InstantMesh accounting for most of the runtime.
+(**our most results were found using google colab)
 ## 7. Limitations (disclosed per rubric)
 
 1. **Single-view underconstraint:** the unseen back/sides of the object are *invented* by Zero123++ multiview diffusion — plausible, not guaranteed faithful. Multiple plausible back-faces may need a different seed.
