@@ -7,6 +7,11 @@ Non-negotiables enforced here (see blueprint Section 1):
 """
 import os
 
+# Must be configured before importing torch. This helps reuse CUDA allocations
+# across the sequential 2D and 3D stages, but cannot make an intrinsically
+# oversized operation fit in VRAM.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 
 # --- Model IDs (verified active) -------------------------------------------
@@ -20,7 +25,7 @@ BG_COLOR_TRIPOSR = (255, 255, 255)      # pure WHITE for TripoSR
 BG_COLOR_INSTANTMESH = (127, 127, 127)  # neutral GRAY for InstantMesh
 
 # --- 3D backend selection (Hour 5-8 benchmark gate decides) -----------------
-PRIMARY_3D_BACKEND = os.getenv("PRIMARY_3D_BACKEND", "triposr")  # "triposr" | "instantmesh"
+PRIMARY_3D_BACKEND = os.getenv("PRIMARY_3D_BACKEND", "instantmesh")  # "instantmesh" | "triposr"
 
 # --- Device pinning (Kaggle T4 x2 does NOT pool VRAM) -----------------------
 DEVICE_2D = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -41,3 +46,16 @@ MIN_VERTICES = 100            # strict floor; never >= 4
 MIN_FACES = 100               # strict floor; never >= 4
 MIN_AXIS_DEPTH = 0.05         # anti-plane check; never 1e-4
 LAPLACIAN_ITERATIONS = 1      # controlled smoothing, default 1 iteration
+
+# InstantMesh's upstream large configuration uses a 128^3 FlexiCubes lattice.
+# It evaluates more than two million vertices at once and needs about 15 GiB of
+# temporary VRAM, which cannot fit on a 15 GB Colab T4. A 64^3 lattice is eight
+# times smaller, still produces a dense real mesh, and is T4-safe. Override
+# this only on a larger GPU with INSTANTMESH_GRID_RES=128.
+INSTANTMESH_GRID_RES = int(os.getenv("INSTANTMESH_GRID_RES", "64"))
+if INSTANTMESH_GRID_RES < 32:
+    raise ValueError("INSTANTMESH_GRID_RES must be at least 32.")
+
+# Keeping the LRM after exporting competes with the next ControlNet request on
+# a single-GPU notebook. Enable only where VRAM headroom is known to be ample.
+KEEP_3D_MODEL_LOADED = os.getenv("KEEP_3D_MODEL_LOADED", "0") == "1"
