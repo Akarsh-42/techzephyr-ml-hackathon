@@ -32,7 +32,6 @@ Turn a rough, single-view 2D sketch — drawn in-app or uploaded — into a **re
 | Dual export: .glb + .obj, reload-verified | ✅ |
 | Mesh validation (8-step, anti-plane, watertight check) | ✅ |
 | Deterministic reruns via seed + retry-once insurance | ✅ |
-| Fallback 3D backend (TripoSR) via env var | ✅ |
 
 ## 3. Architecture
 
