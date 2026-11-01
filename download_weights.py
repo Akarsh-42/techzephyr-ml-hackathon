@@ -1,13 +1,12 @@
-"""Step 1 â€” One-click reproducible weight prefetch.
+"""Step 1 — One-click reproducible weight prefetch.
 
 Judges run `python download_weights.py` once before the live demo; it
-pre-fetches all 2D/3D weights into WEIGHTS_CACHE_DIR (point it at a
-Kaggle Dataset path on the demo machine) and warms rembg's u2net so the
-first real sketch never stalls on Wi-Fi.
+pre-fetches all 2D/3D weights into WEIGHTS_CACHE_DIR and warms rembg's
+u2net so the first real sketch never stalls on Wi-Fi.
 
-Also clones the TripoSR source (the repo is not pip-installable) into
-third_party/TripoSR, and installs torchmcubes with --no-build-isolation
-(it must compile against the already-installed torch).
+Also clones the InstantMesh source (primary 3D backend) and TripoSR source
+(fallback) into third_party/, and installs torchmcubes with
+--no-build-isolation (it must compile against the installed torch).
 """
 from __future__ import annotations
 
@@ -16,28 +15,36 @@ import sys
 import time
 from pathlib import Path
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download
 
 import config
 from src.logger import log_feature_progress
 
-# The pipeline never loads SD's safety_checker (Stage 2 instantiates with
-# safety_checker=None), so skip its ~3.6 GB of weights at prefetch time.
 MODEL_TARGETS = [
     ("Stable Diffusion 1.5", config.SD_MODEL_ID, ["safety_checker/*"]),
     ("ControlNet-Scribble", config.CONTROLNET_MODEL_ID, []),
     ("TripoSR", config.TRIPOSR_MODEL_ID, []),
+    ("Zero123++ multiview diffusion", config.ZERO123PLUS_MODEL_ID, []),
+]
+
+# Single-file weights from TencentARC/InstantMesh (skip the big unused variants).
+INSTANTMESH_FILE_TARGETS = [
+    ("InstantMesh custom Zero123++ UNet", config.INSTANTMESH_MODEL_ID, config.INSTANTMESH_UNET_FILE),
+    ("InstantMesh FlexiCubes reconstruction", config.INSTANTMESH_MODEL_ID, config.INSTANTMESH_CKPT_FILE),
 ]
 
 TRIPOSR_SOURCE_URL = "https://github.com/VAST-AI-Research/TripoSR.git"
 TRIPOSR_SOURCE_DIR = Path(__file__).resolve().parent / "third_party" / "TripoSR"
+
+INSTANTMESH_SOURCE_URL = "https://github.com/TencentARC/InstantMesh.git"
+INSTANTMESH_SOURCE_DIR = Path(__file__).resolve().parent / "third_party" / "InstantMesh"
+
 TORCHMCUBES_URL = "git+https://github.com/tatsy/torchmcubes.git"
-# --no-build-isolation means the venv itself must supply the build backend.
 TORCHMCUBES_BUILD_DEPS = ["scikit-build-core", "ninja", "cmake"]
 
 
 def prefetch_model_weights() -> None:
-    """Snapshot-download each pinned model into WEIGHTS_CACHE_DIR."""
+    """Snapshot-download each pinned model; hf-download InstantMesh single files."""
     Path(config.WEIGHTS_CACHE_DIR).mkdir(parents=True, exist_ok=True)
     for label, model_id, ignore_patterns in MODEL_TARGETS:
         t0 = time.perf_counter()
@@ -48,33 +55,39 @@ def prefetch_model_weights() -> None:
         )
         print(f"[OK] {label} ({model_id}) -> {path} ({time.perf_counter() - t0:.1f}s)")
 
+    for label, repo_id, filename in INSTANTMESH_FILE_TARGETS:
+        t0 = time.perf_counter()
+        path = hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=config.WEIGHTS_CACHE_DIR)
+        print(f"[OK] {label} ({filename}) -> {path} ({time.perf_counter() - t0:.1f}s)")
 
-def clone_triposr_source() -> None:
-    """Clone the TSR source package once (repo has no setup.py, so it's not pip-installable)."""
-    if (TRIPOSR_SOURCE_DIR / "tsr").is_dir():
-        print(f"[OK] TripoSR source already present at {TRIPOSR_SOURCE_DIR}")
+
+def clone_source(name: str, url: str, target: Path, rename_src: bool = False) -> None:
+    """Clone a source-only repo once; optionally rename its top-level src/."""
+    marker = target / ("im_src" if rename_src else "tsr")
+    if marker.is_dir():
+        print(f"[OK] {name} source already present at {target}")
         return
-    TRIPOSR_SOURCE_DIR.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.perf_counter()
-    subprocess.run(
-        ["git", "clone", "--depth", "1", TRIPOSR_SOURCE_URL, str(TRIPOSR_SOURCE_DIR)],
-        check=True,
-    )
-    print(f"[OK] TripoSR source cloned -> {TRIPOSR_SOURCE_DIR} ({time.perf_counter() - t0:.1f}s)")
+    subprocess.run(["git", "clone", "--depth", "1", url, str(target)], check=True)
+    if rename_src and (target / "src").is_dir():
+        # InstantMesh ships a top-level src/ that would shadow OUR src/ package
+        # on sys.path; rename it so imports become im_src.utils.*.
+        (target / "src").rename(target / "im_src")
+        print(f"[OK] {name}: renamed src/ -> im_src/ (avoids package collision)")
+    print(f"[OK] {name} source cloned -> {target} ({time.perf_counter() - t0:.1f}s)")
 
 
 def install_torchmcubes() -> None:
-    """Install torchmcubes; it must build against the installed torch, so no build isolation."""
+    """Install torchmcubes; builds against installed torch, so no build isolation."""
     try:
         import torchmcubes  # noqa: F401
+
         print("[OK] torchmcubes already installed")
         return
     except ImportError:
         pass
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", *TORCHMCUBES_BUILD_DEPS],
-        check=True,
-    )
+    subprocess.run([sys.executable, "-m", "pip", "install", *TORCHMCUBES_BUILD_DEPS], check=True)
     t0 = time.perf_counter()
     subprocess.run(
         [sys.executable, "-m", "pip", "install", "--no-build-isolation", TORCHMCUBES_URL],
@@ -96,13 +109,14 @@ def warm_up_rembg() -> None:
 def main() -> None:
     t0 = time.perf_counter()
     prefetch_model_weights()
-    clone_triposr_source()
+    clone_source("InstantMesh", INSTANTMESH_SOURCE_URL, INSTANTMESH_SOURCE_DIR, rename_src=True)
+    clone_source("TripoSR", TRIPOSR_SOURCE_URL, TRIPOSR_SOURCE_DIR)
     install_torchmcubes()
     warm_up_rembg()
     duration = f"{time.perf_counter() - t0:.1f}s"
 
     log_feature_progress(
-        feature_name="Step 1 â€” Configuration & Reproducible Weight Downloader",
+        feature_name="Step 1 — Configuration & Reproducible Weight Downloader",
         role_owner="Role C (Infra Lead)",
         role_importance_and_job=(
             "Prevents DNF from dead repos & Wi-Fi stalls (Reproducibility 15 pts): locks "
@@ -112,20 +126,16 @@ def main() -> None:
             "config.py", "download_weights.py", "requirements.txt", "src/image_to_3d.py",
         ],
         technical_explanation=(
-            "Pinned stable-diffusion-v1-5/stable-diffusion-v1-5 (active repo; runwayml variant "
-            "is deleted; safety_checker/* skipped since Stage 2 loads the pipeline with "
-            "safety_checker=None, saving ~3.6 GB), lllyasviel/sd-controlnet-scribble, and "
-            "stabilityai/TripoSR, fetched via huggingface_hub.snapshot_download into "
-            f"{config.WEIGHTS_CACHE_DIR}; rembg u2net.onnx warmed with a dummy 64x64 pass. "
-            "TripoSR's GitHub repo is NOT pip-installable (no setup.py/pyproject.toml), so its "
-            "tsr/ source is git-cloned (shallow) into third_party/TripoSR. torchmcubes compiles "
-            "against the installed PyTorch, so it cannot use pip build isolation and is installed "
-            "by this script with --no-build-isolation (deliberately absent from requirements.txt); "
-            "its build backend (scikit-build-core, ninja, cmake) is pip-installed first because "
-            "--no-build-isolation requires the venv to supply it, and its remaining runtime deps "
-            "(omegaconf, einops, imageio) come from requirements.txt. "
-            f"Device pinning: Stage 2 on {config.DEVICE_2D}, Stage 4 on {config.DEVICE_3D}; "
-            f"MOCK_GPU={config.MOCK_GPU}."
+            "Pinned active repos snapshot-downloaded into WEIGHTS_CACHE_DIR: "
+            "stable-diffusion-v1-5 (safety_checker/* skipped, ~3.6 GB saved), "
+            "sd-controlnet-scribble, stabilityai/TripoSR, and sudo-ai/zero123plus-v1.2 "
+            "(InstantMesh multiview stage). InstantMesh weights fetched as single files: "
+            "diffusion_pytorch_model.bin (custom white-bg Zero123++ UNet) and "
+            "instant_mesh_large.ckpt (FlexiCubes recon). Source-only repos shallow-cloned "
+            "into third_party/: InstantMesh (top-level src/ renamed to im_src/ so it "
+            "cannot shadow our own src/ package) and TripoSR (tsr/). torchmcubes installed "
+            "with --no-build-isolation after pip-installing its build backend. rembg "
+            "u2net warmed with a dummy 64x64 pass."
         ),
         duration_or_latency=duration,
     )
