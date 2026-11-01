@@ -2,7 +2,7 @@
 
 **TechZephyr 4.0 · IIT Bhubaneswar · 24-Hour CV & Generative AI Hackathon — Final Submission**
 
-Team: 4menace:
+Team: 4Menace:
 - Ayush Das
 - Dibyajeet Mohanty
 - Soumya Ranjan Rout
