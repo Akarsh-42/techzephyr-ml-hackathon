@@ -13,8 +13,23 @@ from rembg import remove
 import config
 
 DEFAULT_PROMPT = (
-    "high quality, detailed, professional 3D render, studio lighting, "
-    "clean solid background, centered object"
+    "a single coherent object based on the supplied sketch, high quality, "
+    "detailed professional 3D product render, plausible depth and materials, "
+    "studio lighting, clean solid background, centered object"
+)
+
+# This is intentionally a lightweight prompt composer rather than an LLM or a
+# rule-based object classifier. Stable Diffusion's text encoder understands the
+# user's object/material/colour words; ControlNet continues to make the sketch
+# the authority for silhouette and part placement.
+SKETCH_FIDELITY_PROMPT = (
+    "preserve the supplied sketch's silhouette, proportions, major parts, "
+    "and composition"
+)
+NEGATIVE_PROMPT = (
+    "multiple objects, duplicate parts, cluttered background, scenery, text, "
+    "watermark, logo, frame, cropped object, blurry, distorted geometry, "
+    "flat 2D drawing, low quality"
 )
 
 LAST_TIMINGS = {"controlnet_s": 0.0, "rembg_s": 0.0}
@@ -53,6 +68,20 @@ def unload_2d_pipeline() -> None:
         torch.cuda.empty_cache()
 
 
+def build_generation_prompts(user_prompt: str = "") -> tuple[str, str]:
+    """Build the optional appearance prompt without replacing sketch control.
+
+    A blank prompt remains fully supported, as required by the project brief.
+    When supplied, the user's wording is placed first so object, material,
+    colour, and style instructions have the strongest textual influence.
+    """
+    appearance = " ".join((user_prompt or "").split())
+    positive = ", ".join(
+        part for part in (appearance, DEFAULT_PROMPT, SKETCH_FIDELITY_PROMPT) if part
+    )
+    return positive, NEGATIVE_PROMPT
+
+
 def _mock_shaded_render(scribble_img: Image.Image) -> Image.Image:
     gray = cv2.cvtColor(np.asarray(scribble_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
     dist = cv2.distanceTransform(255 - gray, cv2.DIST_L2, 5)
@@ -86,8 +115,7 @@ def generate_2d_and_isolate_foreground(
     control_scale: float = 0.85,
     seed: int = 42,
 ) -> tuple[Image.Image, Image.Image]:
-    user_prompt = (user_prompt or "").strip()
-    prompt = f"{user_prompt}, {DEFAULT_PROMPT}" if user_prompt else DEFAULT_PROMPT
+    prompt, negative_prompt = build_generation_prompts(user_prompt)
 
     t = time.perf_counter()
     if config.MOCK_GPU:
@@ -97,6 +125,7 @@ def generate_2d_and_isolate_foreground(
         generator = torch.Generator(device=config.DEVICE_2D).manual_seed(seed)
         shaded_2d = pipe(
             prompt=prompt,
+            negative_prompt=negative_prompt,
             image=scribble_img,
             num_inference_steps=20,
             controlnet_conditioning_scale=control_scale,
@@ -122,6 +151,10 @@ if __name__ == "__main__":
     shaded, isolated = generate_2d_and_isolate_foreground(scribble, seed=42)
     assert isolated.size == (512, 512) and isolated.mode == "RGBA"
     assert LAST_TIMINGS["controlnet_s"] >= 0.0 and LAST_TIMINGS["rembg_s"] >= 0.0
+    positive_prompt, negative_prompt = build_generation_prompts("a house with a pink roof")
+    assert "a house with a pink roof" in positive_prompt
+    assert "preserve the supplied sketch" in positive_prompt
+    assert "multiple objects" in negative_prompt
 
     log_feature_progress(
         feature_name="Step 3 — ControlNet 2D Synthesis & 85% Foreground Isolation",

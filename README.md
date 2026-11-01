@@ -61,7 +61,7 @@ python -m pipeline              # full end-to-end, exports outputs/run_*.glb/.ob
 
 ## Expected inputs & outputs
 
-- **Input:** in-app sketch (Sketchpad), uploaded sketch image (PNG/JPG), optional text prompt (object, material, color, style), seed.
+- **Input:** in-app sketch (Sketchpad), uploaded sketch image (PNG/JPG), optional text prompt (object, material, color, style), seed. The prompt is composed with a sketch-fidelity instruction and a negative prompt: Stable Diffusion guides appearance while ControlNet preserves the sketch's structure. A prompt is never required.
 - **Output:** `outputs/run_YYYYMMDD_HHMMSS.glb` (primary, vertex-colored), `outputs/run_*.obj` (compatibility fallback), plus the pipeline intermediate gallery and a validation/timing JSON report.
 
 ## Dependencies & licenses
