@@ -7,6 +7,7 @@ Team: 4menace:
 - Dibyajeet Mohanty
 - Soumya Ranjan Rout
 - Akarsh Mohanty
+---
 Repo: https://github.com/Akarsh-42/techzephyr-ml-hackathon
 
 ---
